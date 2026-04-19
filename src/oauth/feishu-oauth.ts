@@ -29,7 +29,7 @@ export class FeishuOAuth {
   private server: any | null = null;
   private readonly tokenManager: TokenManager;
 
-  private static readonly SCOPES = ['offline_access', 'drive:drive', 'drive:drive:readonly'];
+  private static readonly SCOPES = ['offline_access', 'drive:drive', 'drive:drive:readonly', 'docx:document', 'docx:document:write_only'];
 
   constructor(
     private readonly config: FeishuOAuthConfig,
@@ -129,6 +129,7 @@ export class FeishuOAuth {
       const accessToken = data.data?.access_token ?? data.access_token ?? '';
       const refreshToken = data.data?.refresh_token ?? data.refresh_token ?? '';
       const expiresIn = data.data?.expires_in ?? data.expires_in ?? 0;
+      const scope = data.data?.scope ?? data.scope ?? '';
 
       if (!accessToken) {
         return {
@@ -137,11 +138,15 @@ export class FeishuOAuth {
         };
       }
 
+      // 解析授予的权限范围
+      const grantedScopes = scope ? scope.split(' ') : [];
+
       const authData: StoredAuthData = {
         userAccessToken: accessToken,
         refreshToken,
         connectedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+        grantedScopes,
       };
       await this.storage.write(authData);
 

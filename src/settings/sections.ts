@@ -58,14 +58,93 @@ export function renderFeishuAppSection(context: SettingsSectionContext): void {
   );
 
   new Setting(containerEl)
-    .setName('Test Feishu connection')
-    .setDesc('Validate config, authorize if needed, and refresh a valid user access token.')
+    .setName('Feishu Authorization')
+    .setDesc('Authorize the plugin to access your Feishu account.')
     .addButton((button) => {
       setTestConnectionButton(button.buttonEl);
-      button.setButtonText('Test connection').setCta().onClick(async () => {
+      button.setButtonText('Authorize').setCta().onClick(async () => {
         await testConnection(plugin, getTestConnectionButton());
       });
     });
+
+  // 显示所需的权限列表
+  const requiredScopes = [
+    'docx:document',
+    'docx:document:write_only',
+    'drive:drive',
+    'drive:drive:readonly',
+  ];
+
+  const grantedScopes = context.auth.grantedScopes || [];
+
+  // 调试：输出授权的权限范围
+  console.log('[Settings] 检查权限状态:', {
+    requiredScopes,
+    grantedScopes,
+    hasScopes: grantedScopes.length > 0,
+  });
+
+  const permissionDesc = new DocumentFragment();
+  const permissionDiv = permissionDesc.createDiv({
+    cls: 'feishu-permission-list',
+  });
+
+  const permissionList = permissionDiv.createEl('ul');
+
+  requiredScopes.forEach((scope) => {
+    // 检查权限是否已授予（支持模糊匹配）
+    const isGranted = grantedScopes.some(granted =>
+      granted === scope || granted.includes(scope) || scope.includes(granted)
+    );
+
+    console.log(`[Settings] 权限检查: ${scope} -> ${isGranted} (匹配: ${grantedScopes.filter(g => g === scope || g.includes(scope) || scope.includes(g)).join(', ')})`);
+
+    const li = permissionList.createEl('li', {
+      cls: 'feishu-permission-item',
+    });
+
+    li.createEl('span', {
+      text: `${scope} `,
+    });
+
+    li.createEl('span', {
+      text: isGranted ? '✅' : '❌',
+      cls: isGranted ? 'permission-granted' : 'permission-missing',
+    });
+  });
+
+  new Setting(containerEl)
+    .setName('Required permissions')
+    .setDesc(permissionDesc)
+    .setClass('feishu-permission-setting');
+
+  // 显示授权状态（移动到Feishu App区域的最后）
+  if (context.auth.refreshToken) {
+    const statusDesc = new DocumentFragment();
+    const statusDiv = statusDesc.createDiv({
+      cls: 'feishu-auth-status-list',
+    });
+
+    const statusList = statusDiv.createEl('ul');
+
+    statusList.createEl('li', { text: `Connected: ${formatTimestamp(context.auth.connectedAt)}` });
+
+    if (context.auth.expiresAt) {
+      statusList.createEl('li', { text: `Token expires: ${formatTimestamp(context.auth.expiresAt)}` });
+    }
+
+    new Setting(containerEl)
+      .setName('Authorization status')
+      .setDesc(statusDesc)
+      .addButton((button) =>
+        button.setButtonText('Clear auth').setWarning().onClick(async () => {
+          await plugin.clearAuthorization();
+          // 重新加载设置页面
+          context.refresh();
+        }),
+      )
+      .setClass('feishu-auth-status-setting');
+  }
 
   addDivider(containerEl);
 }
@@ -150,6 +229,34 @@ export function renderSyncStrategySection(context: SettingsSectionContext): void
         .setTooltip('Reset to 20 MB')
         .onClick(async () => {
           await plugin.updateConfig({ maxDirectUploadMB: 20 });
+          refresh();
+        }),
+    );
+
+  new Setting(containerEl)
+    .setName('Markdown file sync mode')
+    .setDesc(
+      'Upload .md files as regular files or create as Feishu online documents. ' +
+      'Document mode uses Feishu official API.'
+    )
+    .addDropdown((dropdown) => {
+      dropdown
+        .addOptions({
+          file: 'Upload as files',
+          document: 'Create as online documents',
+        })
+        .setValue(config.markdownSyncMode)
+        .onChange(async (value) => {
+          await plugin.updateConfig({ markdownSyncMode: value as 'file' | 'document' });
+          refresh();
+        });
+    })
+    .addExtraButton((button) =>
+      button
+        .setIcon('reset')
+        .setTooltip('Reset to file mode')
+        .onClick(async () => {
+          await plugin.updateConfig({ markdownSyncMode: 'file' });
           refresh();
         }),
     );
@@ -278,20 +385,6 @@ export function renderStatusSection(context: SettingsSectionContext): void {
   const { containerEl, auth, lastSync, plugin, refresh } = context;
 
   containerEl.createEl('h3', { text: 'Status', cls: 'setting-item-heading' });
-
-  new Setting(containerEl)
-    .setName('Authorization')
-    .setDesc(
-      auth.refreshToken
-        ? `Authorized. Connected at ${formatTimestamp(auth.connectedAt)}.`
-        : 'Not authorized yet.',
-    )
-    .addButton((button) =>
-      button.setButtonText('Clear auth').setWarning().onClick(async () => {
-        await plugin.clearAuthorization();
-        refresh();
-      }),
-    );
 
   new Setting(containerEl)
     .setName('Last sync')

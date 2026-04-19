@@ -3,6 +3,7 @@ import { normalizeExcludeEntries } from './path-utils';
 export type SyncMode = 'manual' | 'auto' | 'scheduled';
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
 export type FileMatchMode = 'exclude' | 'include';
+export type MarkdownSyncMode = 'file' | 'document';
 
 export interface FeishuSyncConfig {
   feishuRootFolderToken: string;
@@ -18,6 +19,7 @@ export interface FeishuSyncConfig {
   retryAttempts: number;
   retryDelay: number;
   logLevel: LogLevel;
+  markdownSyncMode: MarkdownSyncMode;
 }
 
 export interface FeishuAuthState {
@@ -25,6 +27,7 @@ export interface FeishuAuthState {
   refreshToken: string;
   connectedAt: string | null;
   expiresAt: string | null;
+  grantedScopes: string[];
 }
 
 export type SyncRunStatus = 'idle' | 'preview' | 'blocked' | 'success' | 'failed';
@@ -46,18 +49,6 @@ export interface PluginData {
   config: FeishuSyncConfig;
   auth: FeishuAuthState;
   lastSync: SyncSummary | null;
-}
-
-export interface LegacyStandaloneConfig {
-  vaultPath: string;
-  feishuRootFolderToken: string;
-  appId: string;
-  appSecret: string;
-  redirectUri: string;
-  userAccessToken: string;
-  refreshToken: string;
-  exclude: string[];
-  maxDirectUploadMB: number;
 }
 
 export interface ConfigValidationResult {
@@ -84,12 +75,14 @@ export const DEFAULT_PLUGIN_DATA: PluginData = {
     retryAttempts: 3,
     retryDelay: 1000,
     logLevel: 'info',
+    markdownSyncMode: 'file',
   },
   auth: {
     userAccessToken: '',
     refreshToken: '',
     connectedAt: null,
     expiresAt: null,
+    grantedScopes: [],
   },
   lastSync: null,
 };
@@ -168,6 +161,10 @@ export function mergePluginData(raw: unknown): PluginData {
         inputConfig.logLevel === 'debug'
           ? inputConfig.logLevel
           : base.config.logLevel,
+      markdownSyncMode:
+        inputConfig.markdownSyncMode === 'file' || inputConfig.markdownSyncMode === 'document'
+          ? inputConfig.markdownSyncMode
+          : base.config.markdownSyncMode,
     },
     auth: {
       userAccessToken: getString(inputAuth.userAccessToken, base.auth.userAccessToken),
@@ -175,6 +172,7 @@ export function mergePluginData(raw: unknown): PluginData {
       connectedAt:
         inputAuth.connectedAt === null ? null : getString(inputAuth.connectedAt, '') || null,
       expiresAt: inputAuth.expiresAt === null ? null : getString(inputAuth.expiresAt, '') || null,
+      grantedScopes: Array.isArray(inputAuth.grantedScopes) ? inputAuth.grantedScopes : base.auth.grantedScopes,
     },
     lastSync: inputLastSync
       ? {
@@ -255,18 +253,4 @@ export function validateConfig(config: FeishuSyncConfig): ConfigValidationResult
   }
 
   return result;
-}
-
-export function toLegacyConfig(data: PluginData, vaultPath: string): LegacyStandaloneConfig {
-  return {
-    vaultPath,
-    feishuRootFolderToken: data.config.feishuRootFolderToken,
-    appId: data.config.appId,
-    appSecret: data.config.appSecret,
-    redirectUri: data.config.redirectUri,
-    userAccessToken: data.auth.userAccessToken,
-    refreshToken: data.auth.refreshToken,
-    exclude: normalizeExcludeEntries(data.config.exclude),
-    maxDirectUploadMB: data.config.maxDirectUploadMB,
-  };
 }

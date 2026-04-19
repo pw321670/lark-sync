@@ -1,109 +1,110 @@
 # Auth And Token Lifecycle
 
-This document defines the current credential and token contract across `auth.js`, `sync.js`, and `config.example.json`. Any future plugin extraction must preserve this lifecycle or provide an explicit compatibility layer.
+This document defines the current credential and token contract across the plugin runtime in `src/oauth/`, `src/main.ts`, and `config/config.example.json`.
 
 ## Source Anchors
 
-- [`config.example.json`](../../../config.example.json): declares `appId`, `appSecret`, `redirectUri`, `userAccessToken`, and `refreshToken`.
-- [`auth.js`](../../../auth.js): performs the initial OAuth code exchange and writes tokens into `config.json`.
-- [`sync.js`](../../../sync.js): refreshes the token at sync start and writes the rotated token pair back into `config.json`.
-- [`.gitignore`](../../../.gitignore): keeps `config.json` out of version control.
+- [`config/config.example.json`](../../../config/config.example.json): compatibility baseline for `appId`, `appSecret`, `redirectUri`, `userAccessToken`, and `refreshToken`.
+- [`src/oauth/feishu-oauth.ts`](../../../src/oauth/feishu-oauth.ts): current OAuth authorization-code flow, loopback callback server, and auth URL construction.
+- [`src/oauth/token-manager.ts`](../../../src/oauth/token-manager.ts): token refresh orchestration and persistence of rotated tokens.
+- [`src/oauth/auth-storage.ts`](../../../src/oauth/auth-storage.ts): storage boundary between OAuth code and plugin data.
+- [`src/main.ts`](../../../src/main.ts): plugin-level config validation, OAuth rebinding, and sync gating.
 
 ## Stable Config Contract
 
 | Field | Used by | Meaning |
 |-------|---------|---------|
-| `appId` | `auth.js`, `sync.js` | Feishu app identifier used for both authorization-code and refresh-token exchange |
-| `appSecret` | `auth.js`, `sync.js` | Feishu app secret; local secret, never committed |
-| `redirectUri` | `auth.js` | Full callback URL used to derive the local server port and validate callback path |
-| `userAccessToken` | `auth.js`, `sync.js` | Cached access token written after auth or refresh; not trusted as durable input |
-| `refreshToken` | `auth.js`, `sync.js` | Durable credential used to mint fresh access tokens before every sync run |
+| `appId` | plugin OAuth layer | Feishu app identifier for both authorization-code and refresh-token exchange |
+| `appSecret` | plugin OAuth layer | Feishu app secret; local secret, never committed |
+| `redirectUri` | plugin OAuth layer | Full callback URL used to derive the local server port and validate callback path |
+| `userAccessToken` | plugin auth storage | Cached access token written after auth or refresh; not trusted as durable input |
+| `refreshToken` | plugin auth storage | Durable credential used to mint fresh access tokens before sync runs |
 
-`config.example.json` is the public contract. Future settings UIs may change storage format, but they must still supply the same semantic fields to the backend core.
+`config/config.example.json` is the public compatibility contract. The plugin stores data differently, but it must still provide the same semantic fields to the OAuth layer.
 
 ## Initial OAuth Flow
 
-`auth.js main()` performs the current bootstrap sequence:
+The current plugin authorization flow is:
 
-1. Read `config.json`.
-2. Parse `redirectUri` with `new URL()` and derive the local callback port from it.
-3. Build the Feishu authorization URL with the current scope set:
+1. User saves `appId`, `appSecret`, and `redirectUri` in plugin settings.
+2. `src/main.ts` recreates the OAuth helper so later operations use the latest config.
+3. `FeishuOAuth.authorize()` starts a temporary localhost callback server derived from `redirectUri`.
+4. The plugin opens the Feishu authorization URL with these scopes:
    - `offline_access`
    - `drive:drive`
    - `drive:drive:readonly`
-   - `space:document:retrieve`
-4. Start an `http.createServer()` listener on `127.0.0.1`.
-5. Accept only requests whose path matches the configured callback path.
-6. Require the `code` query parameter.
-7. Exchange the code through `getUserAccessToken()` against `https://open.feishu.cn/open-apis/authen/v2/oauth/token`.
-8. Read tokens from either `data.access_token` / `data.refresh_token` or the top-level fallback fields.
-9. Write `userAccessToken` and `refreshToken` into `config.json`.
+   - `docx:document`
+   - `docx:document:write_only`
+5. The callback server accepts only the configured callback path and requires either a `code` or an explicit OAuth error.
+6. The plugin exchanges the code through `POST https://open.feishu.cn/open-apis/authen/v2/oauth/token`.
+7. The returned `userAccessToken`, `refreshToken`, expiry, and granted scopes are written into plugin auth storage.
 
 ## Refresh Flow Before Sync
 
-`sync.js main()` treats the refresh token as the real session bootstrap credential:
+`src/main.ts` treats refresh-token validation as a required pre-sync gate:
 
-1. Read `config.json`.
-2. Fail fast if `refreshToken` is missing.
-3. Call `refreshUserAccessToken()` with `grant_type=refresh_token`.
-4. Accept both nested and top-level token fields in the Feishu response.
-5. Overwrite `config.userAccessToken` and `config.refreshToken`.
-6. Persist `config.json` before any folder listing or file upload occurs.
+1. Validate required config fields.
+2. Block sync immediately if `refreshToken` is missing.
+3. Call `FeishuOAuth.getAccessToken()`.
+4. `TokenManager.getValidAccessToken()` reads stored auth state.
+5. If the token is still valid, return it directly.
+6. If the token is missing or expired, refresh through `POST https://open.feishu.cn/open-apis/authen/v2/oauth/token` with `grant_type=refresh_token`.
+7. If Feishu rotates the refresh token, persist the new pair immediately before sync continues.
 
-Current rule: every sync run refreshes first. Do not build new behavior that depends on a previously cached access token remaining valid.
+Current rule: every sync run must enter through plugin-level token validation. Do not build new behavior that assumes a stale cached access token is still safe to use.
 
 ## Secret Handling Boundaries
 
-- `config.example.json` must stay secret-free.
-- `config.json` must stay local-only and gitignored.
-- `appSecret`, `userAccessToken`, and `refreshToken` are backend secrets, not UI state.
-- The reusable sync core should accept credentials as data and return refreshed credentials as data. It should not decide where those secrets are stored.
+- `config/config.example.json` must stay secret-free.
+- `appSecret`, `userAccessToken`, and `refreshToken` are backend secrets, not normal UI fields.
+- Secrets may live in local plugin data today, but they must never be committed or echoed into user-facing logs/notices.
+- The OAuth layer should accept credentials as data and return refreshed credentials as data. It should not decide how repository files are written.
 
-## Current Prototype Risks To Preserve Or Remove Deliberately
+## Current Runtime Facts
 
-- `auth.js` currently logs the full `tokenData` payload for debugging before persisting tokens.
-- `auth.js` currently calls `saveJson(CONFIG_PATH, config)` twice in succession.
-- `sync.js` returns the raw refresh response in `refreshUserAccessToken().raw`, even though the current caller only uses normalized tokens.
-
-These are current facts, not desired long-term behavior. Do not carry them into a reusable core unless there is a specific reason.
+- `AuthStorage` reads and writes against the latest in-memory plugin auth object through a getter, not a captured snapshot.
+- `TokenManager` uses Obsidian `requestUrl`, not browser `fetch`, for refresh requests inside the plugin runtime.
+- `TokenManager` keeps a single in-flight refresh promise so concurrent entrypoints do not issue duplicate refresh requests.
+- The callback server is temporary and should exist only for an active authorization session.
 
 ## Failure Contract
 
 | Condition | Current behavior |
 |-----------|------------------|
-| OAuth exchange returns `code !== 0` | Throw `Error` and fail the auth run |
-| Refresh exchange returns `code !== 0` | Throw `Error` and fail the sync run before any Drive calls |
-| Token response lacks `access_token` | Throw `Error` even if the HTTP request succeeded |
-| Callback request uses the wrong path | Return HTTP 404 |
-| Callback request omits `code` | Return HTTP 400 |
+| OAuth exchange returns `code !== 0` | return failure and surface an auth error |
+| Refresh exchange returns `code !== 0` | fail sync start before any Drive calls |
+| Token response lacks `access_token` | treat as failure even if the HTTP request succeeded |
+| Callback request uses the wrong path | return HTTP 404 |
+| Callback request omits `code` and does not include an OAuth error | return HTTP 400 |
+| No stored `refreshToken` | block sync and ask the user to authorize |
 
 The current runtime is fail-fast. New abstractions may wrap errors, but they must not silently continue with missing or partial credentials.
 
 ## Migration Rules
 
-- Keep browser launch and callback hosting outside the reusable core.
-- Preserve the ability to derive the callback port from the configured `redirectUri`.
-- Preserve refresh-token rotation semantics. If Feishu returns a new refresh token, it becomes the new source of truth immediately.
-- If token storage moves away from `config.json`, define the persistence boundary explicitly and keep a migration path for existing users.
+- Keep browser launch and callback hosting outside the sync coordinator.
+- Preserve the ability to derive the callback port and path from the configured `redirectUri`.
+- Preserve refresh-token rotation semantics. If Feishu returns a new refresh token, it becomes the stored source of truth immediately.
+- If token storage moves away from plugin data, define the persistence boundary explicitly and keep the same semantic fields.
 
 ## Manual Verification
 
-- Run `node auth.js` with valid local config and confirm that `config.json` gains both `userAccessToken` and `refreshToken`.
-- Re-run `node sync.js` and confirm that `config.json` is updated again with a fresh token pair before sync proceeds.
-- Verify that the callback listener only accepts the configured path and rejects missing `code`.
-- Verify that no committed file ever contains live values for `appSecret`, `userAccessToken`, or `refreshToken`.
+- Save valid OAuth config in the settings tab and run authorization once.
+- Verify the callback listener only accepts the configured path and rejects missing `code`.
+- Expire or clear the stored access token, then start sync and confirm the plugin refreshes before any Feishu Drive request.
+- Trigger two token checks against an expired token and verify they converge on one refresh result.
+- Verify that no committed file contains live values for `appSecret`, `userAccessToken`, or `refreshToken`.
 
 ## Scenario: Obsidian Plugin Token Refresh Transport
 
 ### 1. Scope / Trigger
 
-- Trigger: user-token refresh now runs inside the Obsidian desktop plugin runtime, where browser `fetch()` calls from `app://obsidian.md` can fail CORS preflight.
+- Trigger: token refresh runs inside the Obsidian desktop plugin runtime, where browser `fetch()` from `app://obsidian.md` can fail CORS preflight.
 
 ### 2. Signatures
 
 - [`src/oauth/token-manager.ts`](../../../src/oauth/token-manager.ts)
   - `getValidAccessToken(clientId, clientSecret)`
-  - `forceRefresh(clientId, clientSecret)`
   - `refreshAccessToken(refreshToken, clientId, clientSecret)`
 - [`src/main.ts`](../../../src/main.ts)
   - `verifyFeishuConnection()`
@@ -119,6 +120,7 @@ The current runtime is fail-fast. New abstractions may wrap errors, but they mus
   - `client_secret`
   - `refresh_token`
 - If Feishu rotates the refresh token, the new value becomes the stored source of truth immediately.
+- Token refresh may keep a single-flight in-memory guard when more than one plugin entrypoint can request a token at the same time.
 
 ### 4. Validation & Error Matrix
 
@@ -126,6 +128,7 @@ The current runtime is fail-fast. New abstractions may wrap errors, but they mus
 |------|-------------------|
 | Token still valid | return stored access token without network refresh |
 | Token expired | refresh through `requestUrl`, persist updated token pair, then continue |
+| Two callers ask for refresh during the same expiry window | share one in-flight refresh result instead of issuing duplicate refresh requests |
 | Refresh returns HTTP 4xx/5xx | fail sync start with a surfaced error |
 | Refresh payload lacks `access_token` | treat as failure, do not continue upload |
 | No stored `refreshToken` | block sync and ask the user to authorize |
@@ -134,12 +137,13 @@ The current runtime is fail-fast. New abstractions may wrap errors, but they mus
 
 - Good: sync button calls a plugin-level token validation step before building sync config.
 - Base: access token refresh remains local-plugin state and is persisted in plugin data.
-- Bad: refresh logic depends on browser CORS behavior or silently falls back to stale tokens.
+- Bad: refresh logic depends on browser CORS behavior, issues duplicate concurrent refreshes, or silently falls back to stale tokens.
 
 ### 6. Tests Required
 
 - Expire the stored token, start sync, and verify the plugin refreshes through `requestUrl` before upload starts.
 - Remove `refreshToken` and verify sync stops before any Feishu Drive request is made.
+- Trigger two token checks against an expired token and verify they converge on one refresh result.
 - Simulate an HTTP refresh failure and verify the surfaced error mentions token refresh instead of a generic sync failure.
 
 ### 7. Wrong vs Correct

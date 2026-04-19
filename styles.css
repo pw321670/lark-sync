@@ -1,3 +1,48 @@
 .sync-obsidian-feishu-settings textarea {
   min-height: 8rem;
 }
+
+/* Feishu Permission Status Styles */
+
+.feishu-permission-setting {
+  margin-bottom: 1rem;
+}
+
+.feishu-permission-list ul {
+  margin: 0.5rem 0 0 0;
+  padding-left: 1.5rem;
+  list-style: none;
+}
+
+.feishu-permission-item {
+  margin: 0.25rem 0;
+  font-size: 0.9em;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.permission-granted {
+  color: var(--text-success);
+  font-weight: bold;
+}
+
+.permission-missing {
+  color: var(--text-error);
+  font-weight: bold;
+}
+
+.feishu-auth-status-setting {
+  margin-bottom: 1rem;
+}
+
+.feishu-auth-status-list ul {
+  margin: 0.5rem 0 0 0;
+  padding-left: 1.5rem;
+  list-style: none;
+}
+
+.feishu-auth-status-list li {
+  margin: 0.25rem 0;
+  font-size: 0.9em;
+}

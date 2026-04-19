@@ -1,12 +1,12 @@
-# Settings and Secrets
+# Settings And Secrets
 
-> Purpose: map the standalone JSON config contract into a safe plugin settings experience without normalizing secrets into version-controlled files.
+> Purpose: map the compatibility config contract into a safe plugin settings experience without normalizing secrets into version-controlled files.
 
 ---
 
 ## Current Repo Reality
 
-`config.example.json` defines these fields today:
+`config/config.example.json` still defines the core settings concepts:
 
 - `vaultPath`
 - `feishuRootFolderToken`
@@ -18,33 +18,29 @@
 - `exclude`
 - `maxDirectUploadMB`
 
-`auth.js` writes tokens back into local config after browser authorization, and `.gitignore` excludes `config.json` and `state.json`.
+The plugin stores settings and auth in local plugin data, not in repository files. It still needs to preserve the same distinction between:
 
-That means the current system already distinguishes between:
-
-- User-edited setup data
-- Secret values and tokens
-- Runtime sync state
-
-The plugin should preserve that distinction even if the storage mechanism changes.
+- user-edited setup data
+- secret values and tokens
+- runtime sync state
 
 ---
 
-## Settings Contract For The Future Plugin
+## Settings Contract For The Plugin
 
 | Current Key | Plugin Treatment | UI Rule |
 |-------------|------------------|---------|
-| `vaultPath` | Derived from the active Obsidian vault in normal operation | Show as read-only context or advanced diagnostic data; do not require users to paste a local path for the common case |
+| `vaultPath` | Derived from the active Obsidian vault in normal operation | Show as read-only context or diagnostics only |
 | `feishuRootFolderToken` | Required setting | Editable text input with presence validation |
 | `appId` | Required setting | Editable text input with presence validation |
 | `appSecret` | Secret setting | Masked input; never echo back in notices or logs |
-| `redirectUri` | Required auth setting, usually loopback | Default to the plugin-supported localhost callback and validate format before save |
-| `userAccessToken` | Derived runtime secret | Do not expose as a normal editable field; surface connection state instead |
-| `refreshToken` | Derived runtime secret | Do not ask the user to type it in the standard flow; provide reconnect/clear actions instead |
-| `exclude` | User-managed sync rule list | Multiline list or repeated rows using normalized slash-separated relative paths |
+| `redirectUri` | Required auth setting | Default to the supported localhost callback and validate format before save |
+| `userAccessToken` | Derived runtime secret | Do not expose as a normal editable field |
+| `refreshToken` | Derived runtime secret | Do not ask the user to type it in the standard flow |
+| `exclude` | User-managed path list | Multiline list or repeated rows using normalized slash-separated relative paths |
 | `maxDirectUploadMB` | Required sync threshold | Numeric field with minimum validation and clear help text |
 
-`state.json` is not a user setting. It represents sync bookkeeping and should stay outside the main settings form.
+Sync state is not a user setting. It represents bookkeeping and should stay outside the main settings form.
 
 ---
 
@@ -52,13 +48,14 @@ The plugin should preserve that distinction even if the storage mechanism change
 
 ### Normal Settings
 
-Persist non-secret configuration in plugin-local data, not in repo-tracked files.
+Persist non-secret configuration in plugin-local data.
 
 Examples:
 
 - Feishu root folder token
-- exclude list
+- include/exclude mode and path list
 - upload size threshold
+- retry/concurrency settings
 - redirect URI if the implementation keeps it configurable
 
 ### Secrets
@@ -75,69 +72,61 @@ Rules:
 - Never print them in notices, logs, or error payloads.
 - Never include them in exported debug output without explicit user opt-in and redaction.
 - If a more secure secret store becomes available, prefer it over plain plugin data.
-- Until then, persist them only in local plugin data on the user's machine.
 
 ### Sync State
 
 Store incremental sync state separately from editable settings.
 
-The state contract should preserve the standalone semantics from `sync.js`:
+Current semantic fields:
 
 - key: normalized relative path
 - values: `size`, `mtimeMs`, `uploadedAt`
-
-This state should be replaceable or importable without editing the settings form manually.
 
 ---
 
 ## Validation Rules
 
-Validate before save or before the first side effect:
+Validate before save or before first side effect:
 
 - `feishuRootFolderToken`, `appId`, and `appSecret` must be non-empty.
 - `redirectUri` must be a valid URL and must match the callback mechanism the plugin actually starts.
-- `exclude` entries must be normalized relative paths, not absolute paths.
+- path-list entries must be normalized relative paths, not absolute paths.
 - `maxDirectUploadMB` must be a positive number.
-- Token fields should be treated as managed values; invalid or missing tokens should route the user to reconnect instead of encouraging manual secret editing.
-
-If validation fails, show inline or command-local errors with field names and next steps.
+- token fields are managed values; invalid or missing tokens should route the user to reconnect rather than encouraging manual token editing.
 
 ---
 
 ## Editing UX Rules
 
-- Prefer a "Connect to Feishu" action over asking users to paste tokens manually.
-- Show whether the plugin is currently authorized without revealing the token values.
-- Provide a "Clear authorization" or "Reconnect" action that wipes managed tokens safely.
-- Explain that the active vault defines the sync source unless an advanced override is explicitly designed later.
-- Keep advanced settings collapsed or clearly marked when they are not needed for first-run success.
+- Prefer an "Authorize" action over asking users to paste tokens manually.
+- Show whether the plugin is currently authorized without revealing token values.
+- Provide "Clear authorization" or "Reconnect" style actions that wipe managed tokens safely.
+- Explain that the active vault defines the sync source unless an advanced override is designed later.
+- Keep advanced settings clearly marked.
 
 ---
 
 ## Migration Rules
 
-These are forward-looking rules for the standalone-to-plugin transition:
-
-- If old `config.json` and `state.json` data can be imported, make it an explicit one-time migration step.
-- Import should preserve existing refresh token and incremental sync state when safe.
-- Do not silently overwrite or delete the old standalone files.
-- Any field removed from the plugin UI must have a documented replacement path.
+- If a config concept is removed from the UI, document its replacement path.
+- If settings storage changes, preserve the same semantic fields for the runtime layer.
+- Do not silently merge editable settings and sync bookkeeping into one blob with no ownership boundary.
 
 ---
 
 ## Forbidden Patterns
 
-- Storing secrets in `.trellis/`, repo docs, or version-controlled examples
-- Making `userAccessToken` a normal editable settings field
-- Requiring a manual `vaultPath` input for the common in-vault plugin flow
-- Mixing sync bookkeeping state into the same model the settings tab edits
-- Logging raw Feishu token responses in user-visible UI
+- storing secrets in `.trellis/`, repo docs, or version-controlled examples
+- making `userAccessToken` a normal editable settings field
+- requiring a manual `vaultPath` input for the common plugin flow
+- mixing sync bookkeeping state into the same model the settings tab edits
+- logging raw Feishu token responses in user-visible UI
 
 ## Scenario: Current Plugin Data And OAuth Rebinding
 
 ### 1. Scope / Trigger
 
-- Trigger: the plugin now stores config and auth in Obsidian plugin data, and OAuth helpers must stay bound to the latest in-memory model.
+- Trigger: the plugin stores config and auth in Obsidian plugin data, and OAuth helpers must stay bound to the latest in-memory model.
 
 ### 2. Signatures
 
@@ -163,7 +152,7 @@ These are forward-looking rules for the standalone-to-plugin transition:
 |------|-------------------|
 | User changes auth config | OAuth helper is reinitialized |
 | User clears authorization | access token, refresh token, and expiry are all cleared |
-| Sync starts with expired token | plugin refreshes token before passing auth into sync core |
+| Sync starts with expired token | plugin refreshes token before passing auth into sync runtime |
 | Missing auth | settings remain editable, but sync stays blocked |
 
 ### 5. Good / Base / Bad Cases
@@ -187,71 +176,3 @@ These are forward-looking rules for the standalone-to-plugin transition:
 #### Correct
 
 - `new AuthStorage(() => this.pluginData.auth, ...)`
-
-## Scenario: Settings Tab Composition Boundary
-
-### 1. Scope / Trigger
-
-- Trigger: the plugin settings UI now spans auth, sync scope, diagnostics, and managed auth actions; a single monolithic `src/settings.ts` becomes hard to maintain.
-
-### 2. Signatures
-
-- [`src/settings.ts`](../../../src/settings.ts)
-  - re-export only
-- [`src/settings/setting-tab.ts`](../../../src/settings/setting-tab.ts)
-  - `class FeishuSyncSettingTab`
-- [`src/settings/sections.ts`](../../../src/settings/sections.ts)
-  - `renderFeishuAppSection(context)`
-  - `renderSyncStrategySection(context)`
-  - `renderAdvancedSection(context)`
-  - `renderStatusSection(context)`
-- [`src/settings/actions.ts`](../../../src/settings/actions.ts)
-  - `testConnection(plugin, button?)`
-
-### 3. Contracts
-
-- `src/settings.ts` stays as the stable import surface for `src/main.ts`.
-- UI composition lives in `setting-tab.ts` and section renderers, not in the plugin main class.
-- Section action handlers must call public plugin methods such as `authorizeFeishu()` and `verifyFeishuConnection()` instead of reaching into private fields like `plugin['oauth']`.
-- Managed auth state stays non-editable; the settings UI may clear auth or trigger authorization, but it must not expose token text fields.
-- The current personal-plugin workflow intentionally omits config import/export/reset actions. New settings work should justify any return of that surface area.
-
-### 4. Validation & Error Matrix
-
-| Case | Expected behavior |
-|------|-------------------|
-| Required Feishu config missing | test connection surfaces field-level validation error |
-| User has no refresh token | settings action starts OAuth instead of asking for manual token entry |
-| Clear authorization confirmed | plugin wipes managed auth fields and refreshes the visible status |
-| Settings saved | plugin rebinds OAuth helpers against the latest config |
-
-### 5. Good / Base / Bad Cases
-
-- Good: `src/settings.ts` is a tiny re-export and UI responsibilities are split by concern.
-- Base: section renderers may still be in a single `sections.ts` file as long as actions and helpers stay separate and the section set stays intentionally small.
-- Bad: settings code uses string-index access into private plugin internals or mixes DOM file IO, auth flows, and section layout into one class.
-
-### 6. Tests Required
-
-- Open settings and confirm each section renders after the split.
-- Click `Test connection` with valid config and verify it authorizes or refreshes token successfully.
-- Clear auth from the settings tab and verify the authorization status changes immediately.
-- Save auth-related settings and verify later connection checks use the updated values.
-
-### 7. Wrong vs Correct
-
-#### Wrong
-
-```ts
-if (!this.plugin['oauth']) {
-  this.plugin['initOAuth']();
-}
-const result = await this.plugin['oauth'].authorize();
-```
-
-#### Correct
-
-```ts
-const result = await plugin.authorizeFeishu();
-await plugin.verifyFeishuConnection();
-```

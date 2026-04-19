@@ -1,51 +1,40 @@
-# Commands and Status UX
+# Commands And Status UX
 
-> Purpose: define how the future plugin should expose auth and sync actions through Obsidian commands, notices, and long-running status feedback.
+> Purpose: define how the plugin exposes auth and sync actions through Obsidian commands, notices, and long-running status feedback.
 
 ---
 
 ## Current Repo Reality
 
-Today the operator flow is CLI-like:
+The current plugin flow is Obsidian-native:
 
-1. Fill `config.json`
-2. Run `node auth.js`
-3. Run `node sync.js`
+1. Open plugin settings
+2. Authorize Feishu through the settings UI
+3. Start sync from the ribbon button or command palette
+4. Review summary and follow-up notices inside Obsidian
 
-The scripts reveal the actual runtime phases:
-
-- Authorization builds a browser URL, opens it, waits for a localhost callback, and stores tokens.
-- Sync refreshes the access token first.
-- Sync scans the vault and applies exclude rules.
-- Sync ensures the Feishu folder tree exists.
-- Sync uploads changed files, skips unchanged files, and skips oversize files.
-- Sync writes a final summary through logs.
-
-The plugin must turn those phases into usable Obsidian interactions without changing the underlying contract by accident.
+The plugin currently turns the real runtime phases into Obsidian interactions instead of relying on standalone console output.
 
 ---
 
 ## Required Commands
 
-These are forward-looking plugin commands that should exist once the plugin is implemented:
+Current implemented commands and entrypoints:
 
-- `Connect Feishu account`
-  - Starts the OAuth flow and stores managed tokens on success.
-- `Sync vault to Feishu`
-  - Runs the end-to-end sync flow for the active vault.
-- `Reconnect Feishu account`
-  - Clears or refreshes invalid auth state, then starts the auth flow again.
-- `Show last sync summary`
-  - Displays the latest success/failure summary without starting a new sync.
+- `Start sync to Feishu`
+- `Cancel sync to Feishu`
+- `Open Feishu sync settings`
+- `Preview Feishu sync scope`
+- `Show Feishu sync status`
 
-Optional later commands are fine, but these baseline actions should exist before adding automation or background sync.
+Authorization is handled through the settings UI with an authorize action, not through a separate command.
 
 ---
 
 ## Command Execution Rules
 
 - Commands must validate required settings before side effects.
-- `Sync vault to Feishu` must refuse to start if another sync is already running.
+- `Start sync to Feishu` must refuse to start if another sync is already running.
 - If `refreshToken` is missing or invalid, the sync command should route the user toward reauthorization.
 - Do not start sync automatically on plugin load.
 - Only expose controls that really exist in the runtime. The current plugin supports cancel, not pause/resume.
@@ -53,8 +42,6 @@ Optional later commands are fine, but these baseline actions should exist before
 ---
 
 ## Status Surfaces
-
-Use more than one surface for long-running work:
 
 ### Notices
 
@@ -73,10 +60,9 @@ Keep notices short and actionable.
 Use a longer-lived surface for in-progress work:
 
 - ribbon icon state
-- modal with live progress
-- dedicated log panel
+- persisted last result summary
 
-The implementation choice can vary, but long sync must have a surface that outlives a transient notice. The current plugin shell intentionally uses ribbon state plus a persisted result summary instead of a status-bar line.
+The current plugin intentionally uses ribbon state plus saved summary instead of a status-bar line.
 
 ### Last Result Summary
 
@@ -84,21 +70,19 @@ Persist and display a structured summary after each run:
 
 - started time
 - finished time
-- directories discovered
 - files discovered
 - uploaded count
 - skipped unchanged count
 - skipped oversized count
-- failure state and the last failing path, if any
+- failure state and first failing path, if any
 
 Do not rely on users reading developer console logs to understand what happened.
-The current plugin persists the summary in plugin data and surfaces it through a command instead of a dedicated progress panel.
 
 ---
 
 ## Progress Model
 
-The UI should mirror the real phases already present in `sync.js`:
+The UI should reflect the current runtime phases:
 
 1. `Authorizing` or `Refreshing token`
 2. `Scanning vault`
@@ -109,69 +93,68 @@ The UI should mirror the real phases already present in `sync.js`:
 
 Rules:
 
-- Do not invent percentage progress before the total work is known.
-- Once scan results are known, progress should include counts, not just spinner text.
-- Report large-file skips explicitly; they are meaningful user outcomes, not silent no-ops.
-- If the core still aborts on the first file-level error, the UI must say the run stopped early.
+- Do not invent percentage progress before total work is known.
+- Once scan results are known, progress should include counts when possible.
+- Report large-file skips explicitly.
+- If the run stops on an upload or doc-creation error, the UI must say the run stopped early.
 
 ---
 
 ## Error UX Rules
 
-Errors should be actionable and sanitized.
-
 ### Missing Configuration
 
 - Name the missing field.
-- Link or route the user to settings.
+- Route the user to settings.
 - Do not start partial work.
 
 ### Auth Failures
 
-- Explain whether the failure happened before browser launch, during callback, or during token exchange.
+- Explain whether the failure happened before browser launch, during callback, or during token exchange/refresh.
 - Suggest reconnect when the saved token is invalid.
 - Never expose raw token strings.
 
 ### Sync Failures
 
 - Preserve the most relevant path or phase from the failing operation.
-- Show a short notice plus a place to inspect richer details.
-- Avoid dumping entire Feishu payloads into the primary UI.
+- Show a short notice plus a place to inspect the saved summary.
+- Avoid dumping entire Feishu payloads into the main UI.
 
 ### Recoverability
 
 - If a failure requires user action, say so.
-- If retry is safe, the UI can expose retry from the failed state.
+- If retry is safe, the UI can expose retry later, but it must not imply automatic recovery that does not exist.
 - If the sync partially completed, say that clearly instead of implying success.
 
 ---
 
 ## UX Notes For Current Sync Semantics
 
-The current sync behavior has important implications the plugin must surface honestly:
+The current sync behavior has important user-facing consequences:
 
-- Unchanged files are skipped based on saved file size and modification time.
-- Files above `maxDirectUploadMB` are skipped, not uploaded later automatically.
-- Existing same-name Feishu files are deleted before the replacement upload.
-- The sync is vault-wide and recursive, not limited to the active note.
+- unchanged files are skipped based on saved file size and modification time
+- files above `maxDirectUploadMB` are skipped
+- existing same-name Feishu files are deleted before replacement upload
+- the sync is vault-wide and recursive, not limited to the active note
+- Markdown document mode changes the remote representation of Markdown files when enabled
 
-These are user-facing facts and should not stay hidden in implementation details.
+These facts should not stay hidden in implementation details.
 
 ---
 
 ## Forbidden Patterns
 
-- Using only `console.log` as the sync UX
-- Running overlapping syncs
-- Showing success when any required phase failed
-- Hiding skipped oversize files from the final summary
-- Exposing raw secret values in notices, modals, or logs
+- using only `console.log` as the sync UX
+- running overlapping syncs
+- showing success when any required phase failed
+- hiding skipped oversize files from the final summary
+- exposing raw secret values in notices, modals, or logs
 
 ## Scenario: Ribbon + Notice UX Without Status Bar
 
 ### 1. Scope / Trigger
 
-- Trigger: the plugin now has a real ribbon button and persisted summary, but the status-bar text was deliberately removed during cleanup.
+- Trigger: the plugin has a real ribbon button and persisted summary, but the status-bar text was deliberately removed during cleanup.
 
 ### 2. Signatures
 
@@ -215,7 +198,7 @@ These are user-facing facts and should not stay hidden in implementation details
 
 - Clicking the ribbon button should not create a status-bar item.
 - Failing sync should leave a failed summary in plugin data.
-- Partial sync should drive the ribbon into warning state before it returns to idle.
+- Partial sync should drive the ribbon into warning or error state before it returns to idle.
 - Success should auto-reset the ribbon button back to idle after the short success window.
 
 ### 7. Wrong vs Correct

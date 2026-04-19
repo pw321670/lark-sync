@@ -1,71 +1,69 @@
 # Plugin Architecture
 
-> Purpose: define the future Obsidian plugin shape that wraps the current standalone auth and sync behavior without re-implementing it in UI code.
+> Purpose: define the current Obsidian plugin shape and keep UI code from absorbing sync logic.
 
 ---
 
 ## Current Repo Reality
 
-- There is no plugin entrypoint yet.
-- `auth.js` is a standalone authorization script built around a browser redirect and a temporary local HTTP server.
-- `sync.js` is a standalone sync runner that owns token refresh, vault scan, Feishu folder creation, upload decisions, and local state persistence.
+- The plugin shell exists in `src/main.ts`, `src/settings/`, `src/oauth/*`, `src/sync/*`, and `src/ui/*`.
+- User entrypoints include:
+  - left-ribbon sync button,
+  - command palette commands,
+  - settings tab,
+  - Notice-based feedback.
+- The plugin runtime itself is now the only maintained execution path.
 
-Those scripts are the migration baseline. The plugin should absorb them by extraction, not by hand-rewriting equivalent behavior in multiple places.
+The architecture should stay centered on one live plugin flow, not on preserving removed standalone wrappers.
 
 ---
 
-## Forward-Looking Target Shape
-
-When plugin code is added, keep the architecture split below.
+## Target Shape
 
 ### 1. Obsidian Plugin Shell
 
 Owns only Obsidian-facing concerns:
 
-- Plugin entrypoint and lifecycle hooks such as `onload` and `onunload`
-- Command registration
-- Settings tab registration
-- Status bar items, notices, and other user-visible surfaces
-- Loading and saving plugin-local settings/state
-- Launching the browser or external auth flow through an adapter
+- plugin entrypoint and lifecycle hooks
+- command registration
+- settings tab registration
+- ribbon and notice wiring
+- loading and saving plugin-local settings/state
+- launching browser or external auth flow through the OAuth layer
 
-This layer is expected to be a thin coordinator, not the place where sync logic lives.
+This layer should stay thin.
 
-### 2. Application Services
+### 2. OAuth Services
 
-Owns use-case orchestration:
+Owns:
 
-- `connectToFeishu`
-- `runVaultSync`
-- `clearAuthorization`
-- `getLastSyncSummary`
+- authorization URL building
+- loopback callback server lifecycle
+- code exchange
+- token refresh
+- auth storage writes
 
-These services coordinate adapters, enforce single-run rules, and translate core progress into structured UI events.
+### 3. Sync Runtime
 
-### 3. Shared Sync Core
+Owns:
 
-Owns behavior that should stay usable outside Obsidian if needed:
-
-- Config validation rules derived from `config.example.json`
-- OAuth request building and token exchange/refresh contracts
-- Relative path normalization and exclude matching
-- Recursive sync planning
-- Feishu folder lookup/creation and upload strategy
-- Incremental state comparison using file size and `mtimeMs`
-- Final sync summary shape
-
-The shared core should be importable without `obsidian` runtime dependencies.
+- vault scan
+- path normalization
+- include/exclude matching
+- change detection
+- folder creation
+- file or document upload
+- sync result aggregation
 
 ### 4. Infrastructure Adapters
 
-Wrap environment-specific details behind interfaces:
+Wrap environment-specific details behind small, real boundaries:
 
-- Vault file enumeration and file reads
-- Browser open / external link handling
-- Temporary callback server for loopback OAuth
+- vault file enumeration and file reads
 - Feishu HTTP client
-- Token storage and sync-state storage
-- Time, logging, and progress emission
+- auth storage
+- sync-state storage
+- time and logging helpers when needed
 
 ---
 
@@ -73,100 +71,77 @@ Wrap environment-specific details behind interfaces:
 
 ### `onload`
 
-- Load plugin settings and persisted sync state.
-- Create service instances once.
+- Load plugin settings and persisted summary data.
+- Create OAuth and sync service instances once.
 - Register commands and settings UI.
-- Register passive UI such as a status bar item only if it reflects real runtime state.
+- Register passive UI only if it reflects real runtime state.
 - Do not start authorization or sync automatically on startup.
 
 ### Command Execution
 
 - Validate required settings before side effects.
 - Refuse concurrent sync runs.
-- If authorization is missing, route through the auth flow instead of attempting a broken sync.
-- Emit structured progress updates for the UI; do not rely on raw `console.log` output as the primary UX.
+- If authorization is missing, route the user toward the auth flow instead of attempting a broken sync.
+- Emit structured UI feedback; do not rely on raw `console.log` output as the main UX.
 
 ### Temporary Auth Lifecycle
 
 - Start the local callback listener only for the auth session.
-- Close it after success, timeout, or user cancellation.
-- Never keep a localhost server running for the lifetime of the plugin.
+- Close it after success, timeout, or cancellation.
+- Never keep a localhost auth server alive for the lifetime of the plugin.
 
 ### `onunload`
 
-- Tear down transient listeners or status UI.
+- Tear down transient UI.
+- Cancel in-flight sync if needed.
 - Ensure no orphaned auth server remains.
-- Leave persisted settings/state in a readable, migration-safe format.
 
 ---
 
-## Extraction Plan From The Standalone Scripts
+## Keep Out Of The Plugin Shell
 
-Extract behavior from the current scripts into reusable services before building rich UI around it.
-
-### Extract from `auth.js`
-
-- Config read/write assumptions around `appId`, `appSecret`, `redirectUri`, `userAccessToken`, and `refreshToken`
-- OAuth scope list
-- Authorization URL building
-- Token exchange logic
-- Callback-path validation
-
-### Extract from `sync.js`
-
-- `normalizeRelPath`
-- Exclude matching semantics
-- Recursive walk behavior
-- Refresh-token flow
-- Feishu folder listing and ensure-folder behavior
-- Same-name delete-before-upload behavior
-- Large-file skip threshold behavior
-- Incremental state rules keyed by normalized relative path
-
-### Keep Out of the Shared Core
-
-- `Notice`, status bar, modal, and command palette code
-- Direct reads or writes of repo-root `config.json` and `state.json`
-- Plugin lifecycle bookkeeping
-- Obsidian API objects such as `Plugin`, `Vault`, and `Workspace`
+- direct Feishu upload logic
+- path/filter logic duplicated from `src/sync/*`
+- token refresh logic duplicated outside `src/oauth/*`
+- document/block payload shaping
+- ad hoc sync state mutation inside UI code
 
 ---
 
 ## Recommended File Ownership
 
-This is a forward-looking structure, not a claim that these files already exist:
-
 ```text
 plugin entrypoint
-  -> registers commands/settings/status
-  -> calls application services
+  -> registers commands/settings/ribbon
+  -> calls oauth and sync services
 
-application services
-  -> call shared sync core
-  -> depend on adapters for storage, browser, filesystem, and Feishu HTTP
+oauth services
+  -> own auth URL, callback server, code exchange, refresh
 
-shared sync core
-  -> contains migration-critical logic extracted from auth.js and sync.js
-  -> emits structured progress and result objects
+sync runtime
+  -> owns scan, change detection, folder mapping, upload, result shaping
+
+ui helpers
+  -> render notices, ribbon state, and commands from structured results
 ```
 
-If a new plugin file needs both Obsidian APIs and Feishu sync logic, split it until each part has a single owner.
+If a file needs both `obsidian` APIs and Feishu sync behavior, split it until each part has one clear owner.
 
 ---
 
 ## Forbidden Patterns
 
-- Rewriting sync behavior separately in each command handler
-- Mixing `obsidian` imports into the extracted sync core
-- Reading repo-root `config.json` directly from the future plugin at runtime
-- Treating the plugin settings tab as the source of business logic
-- Starting long-running sync from `onload`
+- rewriting sync behavior separately in each command handler
+- mixing `obsidian` imports into low-level Feishu clients
+- treating the settings tab as the source of business logic
+- starting long-running sync from `onload`
+- keeping a second execution path alive after the plugin path already owns the runtime
 
 ## Scenario: Current Plugin Shell Boundary
 
 ### 1. Scope / Trigger
 
-- Trigger: the repository now has a real Obsidian plugin shell, so the spec must describe the implemented boundary instead of a hypothetical one.
+- Trigger: the repository now has a real Obsidian plugin shell, so the spec must describe the implemented boundary instead of a hypothetical migration target.
 
 ### 2. Signatures
 
@@ -187,7 +162,7 @@ If a new plugin file needs both Obsidian APIs and Feishu sync logic, split it un
   - settings persistence,
   - command registration,
   - ribbon button wiring,
-  - token refresh before sync start.
+  - token validation before sync start.
 - `src/sync/*` owns:
   - vault scanning,
   - path normalization,
@@ -202,7 +177,7 @@ If a new plugin file needs both Obsidian APIs and Feishu sync logic, split it un
 |------|-------------------|
 | Missing required config | block before sync and show a settings-oriented notice |
 | Missing `refreshToken` | block before sync and route user toward authorization |
-| Invalid or expired access token | refresh through OAuth layer before constructing the sync config |
+| Invalid or expired access token | refresh through OAuth layer before constructing sync config |
 | User cancels an in-flight sync | stop remaining work cleanly and return control without treating it as success |
 | Sync runtime error | keep the plugin shell thin and surface the summarized error back to UI |
 
@@ -223,7 +198,7 @@ If a new plugin file needs both Obsidian APIs and Feishu sync logic, split it un
 
 #### Wrong
 
-- let `main.ts` call Feishu upload APIs directly because the code path is “small enough”
+- let `main.ts` call Feishu upload APIs directly because the code path is "small enough"
 
 #### Correct
 

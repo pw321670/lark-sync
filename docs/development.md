@@ -1,8 +1,8 @@
 # 开发说明
 
-## 推荐目录形态
+## 推荐目录结构
 
-本项目现在按 Obsidian 插件常见结构组织：
+当前项目按 Obsidian 插件的常见结构组织：
 
 ```text
 sync-obsidian-feishu/
@@ -11,40 +11,48 @@ sync-obsidian-feishu/
   styles.css
   package.json
   build/
+  config/
+  docs/
   src/
     main.ts
     oauth/
+    settings/
     sync/
     ui/
     utils/
-  legacy/
-  docs/
 ```
 
 说明：
 
 - `manifest.json`、`main.js`、`styles.css` 必须位于插件目录根部，Obsidian 才会加载。
-- 业务源码集中在 `src/`，不要再把“候选实现”“实验性 worker”“示例代码”直接放进活跃路径。
-- `legacy/` 只保留原始参考实现，迁移完成后可以继续裁剪。
+- 业务源码集中在 `src/`。
+- `config/config.example.json` 只提供字段契约示例，不参与插件运行。
+- 项目已经不再保留 standalone 脚本模式，所有运行与测试都以插件形态为准。
 
 ## 本地开发流
 
-1. 准备单独的测试 vault，不要直接在主 vault 上做插件开发。
-2. 把插件目录挂到 `<vault>/.obsidian/plugins/sync-obsidian-feishu`。
+1. 准备一个测试 vault。
+2. 把仓库挂到 `<vault>/.obsidian/plugins/sync-obsidian-feishu`。
 3. 在仓库根目录执行 `npm run dev`。
 4. 在 Obsidian 里启用插件。
-5. 每次修改后重载插件，或配合 Hot Reload 使用。
+5. 每次修改后重新加载插件，或配合 Hot Reload 使用。
+
+如果不想持续监听，也可以每次手动执行一次：
+
+```bash
+npm run build
+```
 
 ## 开发期测试清单
 
-每次改完同步相关逻辑，至少做这几项：
+每次改完授权或同步相关逻辑，至少做这些检查：
 
-1. 设置页能正常保存 `appId`、`appSecret`、`root folder token`、过滤规则。
-2. OAuth 能走完整流程，并把 `refreshToken` 写回插件数据。
-3. `Preview Feishu sync scope` 结果和 vault 实际文件数一致。
-4. 点击左侧 ribbon 按钮后，小样本文件可以成功上传到飞书。
-5. 再次同步未改动文件时，不应该重复报错。
-6. 改动一个文件后再次同步，只验证这一批变更是否正常。
+1. 设置页能正常保存 `appId`、`appSecret`、`feishuRootFolderToken`、过滤规则等配置。
+2. OAuth 能完成浏览器授权，并把 `refreshToken` 写回插件数据。
+3. `Preview Feishu sync scope` 的结果和 vault 实际文件范围一致。
+4. 点击左侧同步按钮后，小样本文件可以成功同步到飞书。
+5. 再次同步未改动文件时，不应重复上传。
+6. 修改一个文件后再次同步，只验证这批变更是否按预期处理。
 
 ## 当前活跃运行链路
 
@@ -55,14 +63,20 @@ src/main.ts
       -> src/sync/obsidian-adapter.ts
       -> src/sync/upload-manager.ts
       -> src/sync/feishu-client.ts
+      -> src/sync/feishu-doc-client.ts
   -> src/ui/*
 ```
 
-如果一个文件不在这条链路上，就应该优先怀疑它是不是已经冗余。
+如果一个文件不在这条链路上，就要优先判断它是不是已经冗余。
 
-## 当前刻意保留的边界
+## 当前明确不再保留的模式
 
-- `legacy/auth.js`
-- `legacy/sync.js`
+- 不再维护 `node auth.js` / `node sync.js` 这类 standalone 运行入口。
+- 不再把仓库根目录 JSON 文件视为运行时配置来源。
+- 不再把旧脚本行为当成额外的“第二事实来源”。
 
-这两个文件仍然有参考价值，因为它们代表了最小可工作的旧实现。做架构调整时，优先保证当前 TypeScript 版本不要偏离它们的核心行为。
+当前唯一事实来源是：
+
+- 代码：`src/`
+- 字段契约：`config/config.example.json`
+- 规范：`.trellis/spec/`

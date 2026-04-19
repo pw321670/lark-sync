@@ -14,7 +14,6 @@ import {
   DEFAULT_PLUGIN_DATA,
   getMissingConfigFields,
   mergePluginData,
-  toLegacyConfig,
   type FeishuSyncConfig,
   type PluginData,
   type SyncSummary,
@@ -54,11 +53,6 @@ export default class SyncObsidianFeishuPlugin extends Plugin {
     return this.pluginData;
   }
 
-  getVaultDisplayPath(): string {
-    const adapter = this.app.vault.adapter as { basePath?: string };
-    return adapter.basePath ?? this.app.vault.getName();
-  }
-
   async updateConfig(patch: Partial<FeishuSyncConfig>): Promise<void> {
     this.pluginData = {
       ...this.pluginData,
@@ -83,6 +77,7 @@ export default class SyncObsidianFeishuPlugin extends Plugin {
         refreshToken: '',
         connectedAt: null,
         expiresAt: null,
+        grantedScopes: [],
       },
     };
 
@@ -392,18 +387,5 @@ export default class SyncObsidianFeishuPlugin extends Plugin {
     };
 
     await this.persistPluginData();
-  }
-
-  async copyLegacyConfigSnapshot(): Promise<void> {
-    const snapshot = toLegacyConfig(this.pluginData, this.getVaultDisplayPath());
-    const payload = JSON.stringify(snapshot, null, 2);
-
-    if (!navigator.clipboard?.writeText) {
-      new Notice('Clipboard access is not available in this environment.');
-      return;
-    }
-
-    await navigator.clipboard.writeText(payload);
-    new Notice('Copied a legacy config snapshot to the clipboard.');
   }
 }

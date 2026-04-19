@@ -5,6 +5,7 @@ export interface StoredAuthData {
   refreshToken: string;
   connectedAt: string | null;
   expiresAt: string | null;
+  grantedScopes: string[];
 }
 
 export interface IAuthStorage {
@@ -30,6 +31,7 @@ export class AuthStorage implements IAuthStorage {
       refreshToken: authState.refreshToken,
       connectedAt: authState.connectedAt,
       expiresAt: authState.expiresAt,
+      grantedScopes: authState.grantedScopes || [],
     };
   }
 
@@ -39,6 +41,7 @@ export class AuthStorage implements IAuthStorage {
     authState.refreshToken = data.refreshToken;
     authState.connectedAt = data.connectedAt;
     authState.expiresAt = data.expiresAt;
+    authState.grantedScopes = data.grantedScopes;
 
     if (this.saveCallback) {
       await this.saveCallback();
@@ -51,6 +54,7 @@ export class AuthStorage implements IAuthStorage {
     authState.refreshToken = '';
     authState.connectedAt = null;
     authState.expiresAt = null;
+    authState.grantedScopes = [];
 
     if (this.saveCallback) {
       await this.saveCallback();

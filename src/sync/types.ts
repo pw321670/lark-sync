@@ -8,6 +8,7 @@ export interface SyncConfig {
   retryAttempts?: number;
   retryDelay?: number;
   logLevel?: 'error' | 'warn' | 'info' | 'debug';
+  markdownSyncMode?: 'file' | 'document';
 }
 
 export interface FileEntry {

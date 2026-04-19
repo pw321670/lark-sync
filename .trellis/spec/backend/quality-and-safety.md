@@ -1,74 +1,63 @@
 # Quality And Safety
 
-This project is a small, direct Node.js prototype. The quality bar today is correctness of the local sync flow, explicit documentation of known limits, and safe handling of secrets and local state while the codebase is still script-based.
+This project is an Obsidian plugin with TypeScript build infrastructure. The quality bar is based on the current plugin runtime, not on removed standalone scripts.
 
 ## Source Anchors
 
-- [`README.md`](../../../README.md): direct Node.js 18+ execution model
-- [`auth.js`](../../../auth.js): auth logging, callback lifecycle, top-level fail-fast exit
-- [`sync.js`](../../../sync.js): sync logging, fail-fast errors, sequential remote operations
-- [`config.example.json`](../../../config.example.json): stable runtime contract
+- [`README.md`](../../../README.md): project overview and usage
+- [`config/config.example.json`](../../../config/config.example.json): stable runtime contract for core settings concepts
+- [`src/main.ts`](../../../src/main.ts): plugin entry point with command registration and sync gating
+- [`src/oauth/*`](../../../src/oauth): auth flow, refresh, and auth storage
+- [`src/sync/*`](../../../src/sync): sync orchestration, upload, state, and Feishu clients
 - [`.gitignore`](../../../.gitignore): local-only sensitive/runtime files
 
 ## Current Quality Profile
 
-- There is no package manager metadata, build system, lint command, typecheck command, or automated test suite in the repo today.
-- The runtime is synchronous for local file I/O and sequential for remote operations.
-- Errors are surfaced as thrown `Error` objects and handled by a top-level `.catch(...)` that logs and exits.
-- Manual verification is the main release gate right now.
-
-## Logging Expectations
-
-Keep logs useful for an operator running `node auth.js` or `node sync.js` locally:
-
-- log major phases, counts, folder names, relative file paths, and retry attempts
-- log enough context to locate the failing folder or file
-- do not log `appSecret`, `userAccessToken`, or `refreshToken`
-
-Known prototype debt:
-
-- `auth.js` currently logs the raw OAuth token payload before writing `config.json`
-- `sync.js` logs remote folder and file tokens during some operations
-- `createFolder()` logs raw response bodies for debugging
-
-Those logs describe current behavior, but they should be treated as temporary debugging output, not a standard to preserve in extracted core modules.
+- **Build system**: TypeScript compilation plus esbuild bundle generation
+- **Type safety**: shared config and sync types flow through `src/`
+- **Modular architecture**: auth, sync, settings, UI, and utility responsibilities are split
+- **Error handling**: fail-fast auth gating plus retry-aware upload behavior
+- **Concurrency**: configurable concurrent uploads with a single-run sync guard
+- **Logging**: runtime logs exist, but user-visible UX should come from notices and summaries, not developer-console spam
 
 ## Failure Handling Rules
 
-- Fail fast on malformed or missing local config/state JSON.
+- Fail fast on missing required config.
+- Fail fast on invalid or missing auth state before Drive or Doc API calls.
 - Fail fast on Feishu responses whose `code` is not `0`.
-- Fail fast when required local prerequisites are missing, such as `refreshToken` or a parent folder token.
-- Do not silently continue after a failed delete or upload. Partial remote changes are preferable to pretending a sync succeeded.
+- Do not silently continue after a failed delete, upload, or doc-creation operation.
+- If sync partially succeeds, surface that as partial or failed state rather than false success.
 
 ## Safety Boundaries
 
-- `config.example.json` is safe to commit; `config.json` is not.
-- `state.json` is disposable runtime state and must stay local-only.
-- The reusable sync core must not call `process.exit()` directly. Exit behavior belongs in the CLI layer.
-- Browser launch, callback hosting, filesystem paths, and raw Node globals are adapter concerns, not long-term core concerns.
+- `config/config.example.json` is safe to commit; local plugin data is not.
+- `appSecret`, `userAccessToken`, and `refreshToken` must never appear in committed files, notices, or default logs.
+- The sync runtime must not rely on repository-root config/state files.
+- Browser launch, callback hosting, and raw Obsidian APIs are adapter concerns, not business-logic concerns.
 
 ## Migration Constraints
 
-- Preserve the meaning of the current config keys or add a documented compatibility layer.
-- Preserve normalized relative-path behavior and `state.json` semantics unless a migration plan is documented.
-- Do not assume Node.js 18 globals will exist inside an Obsidian plugin host. Abstract transport and binary upload dependencies behind interfaces.
-- When moving code into reusable modules, remove prototype-only debug logging instead of duplicating it.
+- Preserve the meaning of current config keys or add a documented compatibility layer.
+- Preserve normalized relative-path behavior and current sync-state semantics unless a migration plan is documented.
+- Do not assume browser `fetch` can reach Feishu auth endpoints from `app://obsidian.md`; use `requestUrl` where required.
+- When simplifying code, remove prototype-only debug logging instead of copying it into new layers.
 
 ## Manual Regression Checklist
 
-- Copy `config.example.json` to `config.json`, fill valid values, and confirm no secrets are ever written back into tracked files.
-- Run `node auth.js` and confirm the browser flow completes, the callback path is enforced, and `config.json` gains token values.
-- Run `node sync.js` against a small vault and confirm folder creation happens before uploads.
-- Re-run `node sync.js` without edits and confirm unchanged files are skipped via `state.json`.
-- Modify an existing file and confirm it is deleted remotely, re-uploaded, and updated in `state.json`.
+- Run `npm run build` and confirm the plugin bundle still typechecks and builds.
+- In an Obsidian test vault, start authorization and confirm the browser flow completes and writes local auth state.
+- Start sync and confirm token refresh happens before remote file work when needed.
+- Confirm folder creation happens before file uploads.
+- Re-run sync without edits and confirm unchanged files are skipped.
+- Modify an existing file and confirm it is re-uploaded and reflected in current sync state.
 - Add an excluded path and confirm it never reaches the remote target.
 - Add a file above `maxDirectUploadMB` and confirm the run continues while that file is skipped.
+- If `markdownSyncMode=document` is enabled, confirm Markdown files take the doc path and failures surface clearly.
 
 ## Known Gaps To Revisit Deliberately
 
-- no automated linting, typing, or tests
-- no pagination handling for folder listing beyond `page_size=200`
-- no retry logic for upload or delete operations
+- no automated tests and no dedicated lint command
+- no pagination handling for folder listing beyond current client behavior
 - no reconciliation for local deletions
-- no incremental checkpoint write during a long sync run
-- duplicate `saveJson()` call in `auth.js`
+- no persistent incremental checkpoint store across plugin reloads yet
+- some debug-heavy logging still exists in sync client/upload paths and should keep shrinking

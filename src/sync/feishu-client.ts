@@ -130,24 +130,44 @@ export class FeishuClient {
       fileContent,
     );
 
-    const response = await this.fetchWithRetry<UploadFileResponse>(
-      `${this.baseURL}/drive/v1/files/upload_all`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.config.userAccessToken}`,
+    // 🔍 调试信息：上传前记录详细信息（方便后续删除）
+    console.log('[Feishu Upload] 准备上传文件:', {
+      fileName,
+      fileSize,
+      parentFolderToken,
+      contentType
+    });
+
+    try {
+      const response = await this.fetchWithRetry<UploadFileResponse>(
+        `${this.baseURL}/drive/v1/files/upload_all`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.config.userAccessToken}`,
+          },
+          contentType,
+          body,
         },
-        contentType,
-        body,
-      },
-    );
+      );
 
-    const token = response.data?.fileToken ?? response.data?.file_token ?? response.data?.token;
-    if (!token) {
-      throw new Error(`Upload response missing file token: ${JSON.stringify(response)}`);
+      const token = response.data?.fileToken ?? response.data?.file_token ?? response.data?.token;
+      if (!token) {
+        console.error('[Feishu Upload] 响应中缺少文件 token:', response);
+        throw new Error(`Upload response missing file token: ${JSON.stringify(response)}`);
+      }
+
+      console.log('[Feishu Upload] 上传成功:', { fileName, token });
+      return token;
+    } catch (error) {
+      console.error('[Feishu Upload] 上传失败:', {
+        fileName,
+        error: error instanceof Error ? error.message : String(error),
+        fileSize,
+        parentFolderToken
+      });
+      throw error;
     }
-
-    return token;
   }
 
   private async fetchWithRetry<T>(
@@ -159,6 +179,17 @@ export class FeishuClient {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
+        // 🔍 调试信息：记录请求详情（仅在上传失败时）
+        if (url.includes('upload_all') && attempt > 1) {
+          console.log('[Feishu API] 重试上传请求:', {
+            attempt,
+            url,
+            method: init?.method,
+            contentType: init?.contentType,
+            bodySize: init?.body instanceof ArrayBuffer ? init.body.byteLength : 'unknown'
+          });
+        }
+
         const response = await requestUrl({
           url,
           method: init?.method || 'GET',
@@ -168,13 +199,30 @@ export class FeishuClient {
         });
 
         const data = response.json as FeishuApiResponse<T>;
+
+        // 🔍 调试信息：记录飞书 API 响应错误
         if (data.code !== 0) {
+          console.error('[Feishu API] API 返回错误:', {
+            url,
+            code: data.code,
+            msg: data.msg,
+            fullResponse: data
+          });
           throw new Error(`Feishu API error (code=${data.code}): ${data.msg || 'unknown error'}`);
         }
 
         return data;
       } catch (error) {
         lastError = error as Error;
+
+        // 🔍 调试信息：记录网络错误
+        if (url.includes('upload_all')) {
+          console.error('[Feishu API] 请求失败:', {
+            attempt,
+            error: lastError.message,
+            url
+          });
+        }
 
         if (attempt < maxAttempts) {
           await this.sleep(this.retryDelay);
@@ -190,36 +238,50 @@ export class FeishuClient {
     fileName: string,
     fileContent: ArrayBuffer,
   ): { body: ArrayBuffer; contentType: string } {
-    const boundary = `----sync-obsidian-feishu-${Date.now().toString(16)}`;
+    const boundary = `----Boundary${Date.now().toString(16)}`;
     const encoder = new TextEncoder();
     const chunks: Uint8Array[] = [];
 
+    // 🔍 调试信息：记录 multipart 构建过程（方便后续删除）
+    console.log('[Multipart Build] 开始构建 multipart body:', {
+      fileName,
+      fieldCount: Object.keys(fields).length,
+      fileSize: fileContent.byteLength
+    });
+
+    // 添加表单字段
     for (const [name, value] of Object.entries(fields)) {
-      chunks.push(
-        encoder.encode(
-          `--${boundary}\r\n` +
-            `Content-Disposition: form-data; name="${name}"\r\n\r\n` +
-            `${value}\r\n`,
-        ),
+      const chunk = encoder.encode(
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="${name}"\r\n\r\n` +
+        `${value}\r\n`
       );
+      chunks.push(chunk);
+      console.log('[Multipart Build] 添加字段:', name, '=', value);
     }
 
-    // 对文件名进行编码，支持中文等非 ASCII 字符
-    // 同时提供普通文件名（兼容性）和 RFC 2231 编码格式
-    const encodedFileName = encodeURIComponent(fileName);
-    // 对文件名进行 ASCII 转义，确保兼容性
-    const asciiFileName = fileName.replace(/[^\x00-\x7F]/g, '?');
+    // 添加文件字段 - 转义文件名中的特殊字符以防止 multipart 注入
+    // 移除可能破坏 multipart 格式的字符：引号、换行符等
+    const safeFileName = fileName.replace(/[\r\n"]/g, '');
 
-    chunks.push(
-      encoder.encode(
-        `--${boundary}\r\n` +
-          `Content-Disposition: form-data; name="file"; filename="${asciiFileName}"; filename*=UTF-8''${encodedFileName}\r\n` +
-          `Content-Type: application/octet-stream\r\n\r\n`,
-      ),
+    const fileHeader = encoder.encode(
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="file"; filename="${safeFileName}"\r\n` +
+      `Content-Type: application/octet-stream\r\n\r\n`
     );
+
+    console.log('[Multipart Build] 添加文件字段:', {
+      name: 'file',
+      originalFileName: fileName,
+      safeFileName: safeFileName,
+      fileNameChanged: fileName !== safeFileName
+    });
+
+    chunks.push(fileHeader);
     chunks.push(new Uint8Array(fileContent));
     chunks.push(encoder.encode(`\r\n--${boundary}--\r\n`));
 
+    // 合并所有 chunk
     const totalLength = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
     const merged = new Uint8Array(totalLength);
     let offset = 0;
@@ -228,6 +290,12 @@ export class FeishuClient {
       merged.set(chunk, offset);
       offset += chunk.byteLength;
     }
+
+    console.log('[Multipart Build] multipart body 构建完成:', {
+      totalSize: totalLength,
+      chunkCount: chunks.length,
+      boundary
+    });
 
     return {
       body: merged.buffer,

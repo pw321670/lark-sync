@@ -20,6 +20,7 @@ export function buildSyncConfig(options: SyncConfigBuilderOptions) {
     retryAttempts: config.retryAttempts,
     retryDelay: config.retryDelay,
     logLevel: config.logLevel,
+    markdownSyncMode: config.markdownSyncMode,
   };
 }
 

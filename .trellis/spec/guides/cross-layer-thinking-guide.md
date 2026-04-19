@@ -9,12 +9,12 @@
 In this project, most features eventually touch this chain:
 
 ```text
-Plugin settings or config file
+Plugin settings / plugin data
 -> auth/token lifecycle
--> filesystem scan
+-> vault scan
 -> normalized relative paths
 -> folder mapping
--> Feishu Drive API calls
+-> Feishu Drive / Doc API calls
 -> local sync state
 -> user-facing status and errors
 ```
@@ -27,12 +27,12 @@ If a change touches two or more steps, treat it as cross-layer work.
 
 | Boundary | Current Source | Typical Risk |
 |----------|----------------|--------------|
-| Settings -> persisted config | `config.example.json`, `config.json` | Missing field validation, secrets leaking into logs |
-| OAuth callback -> token storage | `auth.js` | Refresh tokens overwritten incorrectly |
-| Filesystem -> normalized path keys | `sync.js` | Mixed `\\` and `/`, exclude mismatches |
-| Path key -> Feishu folder/file location | `sync.js` | Uploading to the wrong folder tree |
-| Feishu API result -> local state | `sync.js` | State says upload succeeded when remote operation failed |
-| Sync engine -> future Obsidian UX | future plugin layer | UI reports success without surfacing partial failure |
+| Settings -> persisted config | `config/config.example.json`, plugin data, `src/utils/contracts.ts` | Missing field validation, secrets leaking into logs |
+| OAuth callback -> token storage | `src/oauth/*` | Refresh tokens overwritten incorrectly |
+| Filesystem -> normalized path keys | `src/main.ts`, `src/sync/*` | Mixed `\\` and `/`, filter mismatches |
+| Path key -> Feishu folder/file location | `src/sync/*` | Uploading to the wrong folder tree |
+| Feishu API result -> local state | `src/sync/*` | State says upload succeeded when remote operation failed |
+| Sync runtime -> Obsidian UX | `src/main.ts`, `src/ui/*` | UI reports success without surfacing partial failure |
 
 ---
 
@@ -41,6 +41,7 @@ If a change touches two or more steps, treat it as cross-layer work.
 ### 1. Write down the contract
 
 For every boundary you touch, define:
+
 - input shape
 - output shape
 - where validation happens
@@ -49,17 +50,21 @@ For every boundary you touch, define:
 ### 2. Check the current anchor points
 
 Read the functions that already own the behavior:
-- `auth.js`: `getUserAccessToken()`, local callback server, config persistence
-- `sync.js`: `normalizeRelPath()`, `shouldExclude()`, `walkDir()`, `refreshUserAccessToken()`, `ensureFolder()`, `uploadSmallFile()`, `deleteFileByToken()`, `main()`
+
+- `src/main.ts`: plugin gating, summary persistence, command routing
+- `src/oauth/*`: current OAuth implementation
+- `src/sync/*`: current sync implementation
+- `src/utils/contracts.ts`: config/auth data shape
 
 Do not add a second source of truth unless you are extracting the first one.
 
 ### 3. Decide which layer owns what
 
 Use this split:
+
 - plugin layer owns commands, settings UI, notices, and user actions
-- shared sync core owns filesystem traversal, token refresh, mapping, and Feishu requests
-- persistence layer owns config/state serialization and field compatibility
+- auth/sync layers own token refresh, traversal, mapping, and Feishu requests
+- persistence layer owns config/auth/state serialization and compatibility
 
 ---
 
@@ -68,41 +73,47 @@ Use this split:
 ### Failure 1: Config shape changes in one place only
 
 Symptoms:
-- plugin settings save a new key
-- script fallback still expects the old key
-- runtime fails only after authorization or sync starts
+
+- settings save a new key
+- runtime still expects the old semantic field
+- failure appears only when auth or sync starts
 
 ### Failure 2: Path normalization is not applied symmetrically
 
 Symptoms:
-- exclude rules fail on Windows paths
+
+- filters fail on Windows paths
 - state keys stop matching the same file after refactor
 
 ### Failure 3: UI success hides sync failure
 
 Symptoms:
-- command palette action finishes
+
+- command or ribbon action finishes
 - user sees "done"
 - one or more uploads silently failed or were skipped
 
 ### Failure 4: Refactor moves logic but leaves side effects behind
 
 Symptoms:
+
 - a new shared helper exists
-- old code path still writes config or state separately
-- behavior diverges between standalone and plugin modes
+- old code path still writes auth or state separately
+- behavior diverges between entrypoints
 
 ---
 
 ## Checklist
 
 Before commit:
+
 - [ ] I mapped every boundary touched by the change
 - [ ] I identified the single owner for each piece of logic
-- [ ] I verified config/state compatibility
+- [ ] I verified config/auth/state compatibility
 - [ ] I traced partial failure behavior back to the user-facing layer
 
 After implementation:
+
 - [ ] I tested at least one happy path
 - [ ] I tested one auth failure or invalid config path
-- [ ] I tested one sync edge case involving excludes, folder mapping, or retries
+- [ ] I tested one sync edge case involving filters, folder mapping, or retries

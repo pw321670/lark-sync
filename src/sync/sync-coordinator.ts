@@ -1,5 +1,6 @@
 import type { FileEntry, SyncConfig, SyncResult } from './types';
 import { FeishuClient } from './feishu-client';
+import { FeishuDocClient } from './feishu-doc-client';
 import { StateTracker } from './state-tracker';
 import { UploadManager } from './upload-manager';
 
@@ -79,9 +80,17 @@ export class SyncCoordinator {
       retryAttempts: config.retryAttempts,
       retryDelay: config.retryDelay,
     });
+
+    // 如果启用了 Markdown 文档模式，则创建文档客户端
+    let docClient: FeishuDocClient | undefined;
+    if (config.markdownSyncMode === 'document') {
+      docClient = new FeishuDocClient(config.userAccessToken);
+      this.log('飞书文档 API 客户端已启用');
+    }
+
     const uploadManager = new UploadManager(config, client, {
       readFileContent: (path) => this.vault.readBinary(path.replace(/\\/g, '/')),
-    });
+    }, docClient);
 
     const scannedFiles = this.scanFiles();
     this.throwIfCancelled(run);

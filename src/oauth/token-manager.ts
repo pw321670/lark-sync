@@ -167,6 +167,7 @@ export class TokenManager {
         refreshToken: nextRefreshToken,
         connectedAt: previousAuth?.connectedAt ?? new Date().toISOString(),
         expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+        grantedScopes: previousAuth?.grantedScopes ?? [],
       });
 
       return {

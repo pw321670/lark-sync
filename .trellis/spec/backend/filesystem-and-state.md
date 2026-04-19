@@ -1,66 +1,57 @@
 # Filesystem And State
 
-This document defines how the sync runtime discovers vault content, filters paths, and tracks incremental sync state in `state.json`.
+This document defines how the current plugin runtime discovers vault content, filters paths, and tracks incremental sync state.
 
 ## Source Anchors
 
-- [`sync.js`](../../../sync.js)
-  - `normalizeRelPath()`
-  - `shouldExclude()`
-  - `walkDir()`
-  - `main()` state loading, change detection, and final `state.json` write
-- [`config.example.json`](../../../config.example.json)
-  - `vaultPath`
-  - `exclude`
-  - `maxDirectUploadMB`
-- [`.gitignore`](../../../.gitignore): `state.json` is local-only runtime state
+- [`src/main.ts`](../../../src/main.ts): injects Obsidian file enumeration and binary reads into the sync layer.
+- [`src/sync/sync-coordinator.ts`](../../../src/sync/sync-coordinator.ts): scans files, filters them, detects changes, and persists upload state.
+- [`src/sync/state-tracker.ts`](../../../src/sync/state-tracker.ts): owns the current state schema and save timing.
+- [`src/utils/contracts.ts`](../../../src/utils/contracts.ts): config defaults such as include/exclude mode and upload thresholds.
+- [`config/config.example.json`](../../../config/config.example.json): compatibility baseline for `vaultPath`, `exclude`, and `maxDirectUploadMB`.
 
 ## Path Contract
 
-Every path that leaves the local filesystem traversal and enters sync logic must be:
+Every path that leaves Obsidian file enumeration and enters sync logic must be:
 
-- relative to `config.vaultPath`
-- normalized with `/` separators via `normalizeRelPath()`
-- reused consistently for exclude checks, state keys, folder lookups, and logs
+- vault-relative
+- normalized with `/` separators
+- reused consistently for include/exclude checks, state keys, folder lookup, and logs
 
-This cross-platform normalization is mandatory. A path like `Folder\\Note.md` on Windows must become `Folder/Note.md` before any matching or persistence happens.
+This normalization is mandatory. A path like `Folder\\Note.md` on Windows must become `Folder/Note.md` before matching or persistence.
 
-## Exclude Semantics
+## Match Semantics
 
-`shouldExclude(relPath, excludeList)` matches on normalized relative paths using two rules:
+The current sync layer supports two modes:
 
-- exact match: `normalized === item`
-- subtree match: `normalized.startsWith(item + "/")`
+- `fileMatchMode = "exclude"`:
+  - a path is ignored when `normalized === item`
+  - or `normalized.startsWith(item + "/")`
+- `fileMatchMode = "include"`:
+  - a path is kept only when the same checks succeed
 
-Examples based on the current contract in `config.example.json`:
-
-- `.trash` excludes `.trash` and everything below `.trash/...`
-- `.obsidian/workspace.json` excludes only that file
-- `.obsidian/workspaces.json` excludes only that file
+The current settings UI still presents these entries as the user-managed path list, so all callers must apply the same normalization rules.
 
 There is no globbing, regex support, or case normalization beyond `/` separator normalization.
 
 ## Vault Scan Semantics
 
-`walkDir(rootDir, currentDir, excludeList, result)` performs a synchronous recursive walk:
+The plugin scan flow is:
 
-- directories are emitted as `{ type: "dir", absPath, relPath }`
-- files are emitted as `{ type: "file", absPath, relPath }`
-- excluded directories are skipped before recursion continues
-- excluded files are skipped before they enter the result set
+1. `main.ts` calls `this.app.vault.getFiles()`.
+2. The result is mapped into simple `{ path, stat }` entries.
+3. `SyncCoordinator.scanFiles()` converts those entries into normalized `FileEntry` objects:
+   - `relPath`
+   - `size`
+   - `mtimeMs`
+4. `filterFiles()` applies include/exclude logic and oversize checks.
+5. `detectChanges()` compares remaining files against `StateTracker`.
 
-`sync.js main()` then splits the result into:
-
-- `dirs`, sorted lexicographically by `relPath`
-- `files`, sorted lexicographically by `relPath`
-
-Folder creation depends on this stable sorting because parent directories must be processed before child directories and files.
+Current behavior is file-oriented. The runtime no longer keeps a separate standalone recursive directory walker as a second source of truth.
 
 ## State Schema
 
-`state.json` is optional input and a local output artifact. If the file does not exist, the runtime uses `{}`.
-
-Current persisted shape:
+Current in-memory shape:
 
 ```json
 {
@@ -75,8 +66,8 @@ Current persisted shape:
 Rules:
 
 - the key is the normalized vault-relative file path
-- `size` comes from `fs.statSync(file.absPath).size`
-- `mtimeMs` comes from `fs.statSync(file.absPath).mtimeMs`
+- `size` comes from Obsidian file stats
+- `mtimeMs` comes from Obsidian file stats
 - `uploadedAt` is written with `new Date().toISOString()` after a successful upload
 
 ## Change Detection
@@ -84,16 +75,17 @@ Rules:
 A file is treated as unchanged only when all of the following are true:
 
 - a previous state entry exists for `state[relPath]`
-- `prev.size === stat.size`
-- `prev.mtimeMs === stat.mtimeMs`
+- `prev.size === file.size`
+- `prev.mtimeMs === file.mtimeMs`
 
 If those checks pass, the file is skipped without any remote API calls.
 
 ## Current State Limitations
 
-- `state.json` is written once at the end of the run, not after each uploaded file.
-- Deleted local files are not pruned from Feishu Drive or from `state.json`.
-- Files larger than `config.maxDirectUploadMB` are skipped and do not receive a fresh state entry for that run.
+- The default `StateTracker` store is in-memory only.
+- State is saved after successful uploads, but without a persistent injected store it does not survive plugin reload.
+- Deleted local files are not pruned from Feishu Drive or from stored sync state.
+- Files larger than `maxDirectUploadMB` are skipped and do not receive a fresh state entry for that run.
 - Folder tokens are not persisted across runs; they are rebuilt in memory every sync.
 
 These limitations are part of the current runtime behavior and must be changed deliberately, not accidentally.
@@ -101,38 +93,38 @@ These limitations are part of the current runtime behavior and must be changed d
 ## Migration Rules
 
 - Do not switch state keys to absolute paths, platform-native separators, or remote file tokens.
-- If `state.json` gains new fields, keep existing keys readable or define a migration step.
-- If the filesystem layer moves into an Obsidian plugin host, preserve the normalized relative-path contract even if file access stops using Node's `fs`.
-- Keep exclude matching centralized so traversal, sync, and UI previews cannot drift apart.
+- If state gains new fields, keep existing keys readable or define a migration step.
+- Preserve the normalized relative-path contract even though file access now uses Obsidian APIs instead of a standalone filesystem walk.
+- Keep match logic centralized so preview, sync, and settings explanations cannot drift apart.
 
 ## Manual Verification
 
-- Add nested directories and verify they appear in sorted, parent-first order during sync.
-- Add an excluded directory such as `.trash` and verify neither the directory nor its descendants are uploaded.
+- Add nested files and verify their normalized `relPath` values remain slash-separated on Windows.
+- Add an excluded path such as `.trash` and verify it never reaches upload.
 - Re-run sync without changing a file and verify it is skipped based on `size` and `mtimeMs`.
-- Modify a file's contents and verify its `state.json` entry receives a new `uploadedAt`.
-- Test on Windows-style paths and verify the stored state keys still use `/`.
+- Modify a file and verify its state entry receives a new `uploadedAt`.
+- Reload the plugin and verify current state limitations are understood: unchanged-skip behavior will reset unless persistent state storage is added.
 
 ## Scenario: Obsidian Vault Reads Must Stay Vault-Relative
 
 ### 1. Scope / Trigger
 
-- Trigger: the plugin version hit a real runtime failure where folder creation worked but every file upload failed during file reads.
+- Trigger: the plugin hit a real runtime failure where folder creation worked but file uploads failed because vault-relative paths were treated as OS paths.
 
 ### 2. Signatures
 
-- `src/sync/obsidian-adapter.ts`
-  - `buildSyncConfig({ config, auth })`
-- `src/main.ts`
+- [`src/main.ts`](../../../src/main.ts)
   - `initSyncCoordinator()`
-- `src/sync/sync-coordinator.ts`
-  - constructor `({ vault, stateStorage })`
+- [`src/sync/obsidian-adapter.ts`](../../../src/sync/obsidian-adapter.ts)
+  - `buildSyncConfig({ config, auth })`
+- [`src/sync/sync-coordinator.ts`](../../../src/sync/sync-coordinator.ts)
+  - constructor `(vault)`
   - `startSync(config)`
 
 ### 3. Contracts
 
 - Obsidian file enumeration produces vault-relative paths such as `Folder/Note.md`.
-- File reads inside the plugin must use `vault.adapter.readBinary(normalizedVaultPath)` through the vault callback passed into `SyncCoordinator`.
+- File reads inside the plugin must use `vault.readBinary(normalizedVaultPath)`.
 - Do not reinterpret vault-relative paths as OS absolute paths inside the plugin runtime.
 - `SyncCoordinator` and `UploadManager` must treat `relPath` as the only file-read key in the Obsidian runtime.
 
@@ -140,8 +132,8 @@ These limitations are part of the current runtime behavior and must be changed d
 
 | Input path | Expected behavior |
 |------------|-------------------|
-| `Welcome.md` | read through `vault.adapter.readBinary('Welcome.md')` |
-| `00-inbox/note.md` | read through `vault.adapter.readBinary('00-inbox/note.md')` |
+| `Welcome.md` | read through `readBinary('Welcome.md')` |
+| `00-inbox/note.md` | read through `readBinary('00-inbox/note.md')` |
 | empty path | fail immediately with a local validation error |
 | path mixed with OS-specific absolute path assumptions | reject as an implementation bug |
 
@@ -165,4 +157,4 @@ These limitations are part of the current runtime behavior and must be changed d
 
 #### Correct
 
-- keep `file.path` vault-relative and hand it directly to `vault.adapter.readBinary()` after slash normalization
+- keep `file.path` vault-relative and hand it directly to the injected `readBinary()` callback after slash normalization
