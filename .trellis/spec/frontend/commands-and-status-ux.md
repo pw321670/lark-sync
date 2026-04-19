@@ -48,7 +48,7 @@ Optional later commands are fine, but these baseline actions should exist before
 - `Sync vault to Feishu` must refuse to start if another sync is already running.
 - If `refreshToken` is missing or invalid, the sync command should route the user toward reauthorization.
 - Do not start sync automatically on plugin load.
-- Do not offer a fake cancel button until cooperative cancellation exists in the core flow.
+- Only expose controls that really exist in the runtime. The current plugin supports cancel, not pause/resume.
 
 ---
 
@@ -72,11 +72,11 @@ Keep notices short and actionable.
 
 Use a longer-lived surface for in-progress work:
 
-- status bar text
+- ribbon icon state
 - modal with live progress
 - dedicated log panel
 
-The implementation choice can vary, but long sync must have a surface that outlives a transient notice.
+The implementation choice can vary, but long sync must have a surface that outlives a transient notice. The current plugin shell intentionally uses ribbon state plus a persisted result summary instead of a status-bar line.
 
 ### Last Result Summary
 
@@ -92,6 +92,7 @@ Persist and display a structured summary after each run:
 - failure state and the last failing path, if any
 
 Do not rely on users reading developer console logs to understand what happened.
+The current plugin persists the summary in plugin data and surfaces it through a command instead of a dedicated progress panel.
 
 ---
 
@@ -165,3 +166,64 @@ These are user-facing facts and should not stay hidden in implementation details
 - Showing success when any required phase failed
 - Hiding skipped oversize files from the final summary
 - Exposing raw secret values in notices, modals, or logs
+
+## Scenario: Ribbon + Notice UX Without Status Bar
+
+### 1. Scope / Trigger
+
+- Trigger: the plugin now has a real ribbon button and persisted summary, but the status-bar text was deliberately removed during cleanup.
+
+### 2. Signatures
+
+- `src/ui/sync-button.ts`
+  - `setIdle()`
+  - `setSyncing()`
+  - `setSuccess()`
+  - `setWarning()`
+  - `setError()`
+- `src/ui/notification-manager.ts`
+  - `syncStarted()`
+  - `syncCompleted(summary)`
+  - `needsConfiguration(fields)`
+  - `needsAuthorization()`
+
+### 3. Contracts
+
+- The primary runtime surfaces are:
+  - ribbon icon state,
+  - short Notice messages,
+  - persisted `lastSync` summary in plugin data.
+- There is currently no status-bar text surface and no manual token-refresh command; new work should not reintroduce either casually.
+
+### 4. Validation & Error Matrix
+
+| Case | Expected UX |
+|------|-------------|
+| Sync started | notice + ribbon enters syncing state |
+| Sync completed with zero failures | success notice + ribbon success state |
+| Sync completed with file failures | warning or failed summary, never silent success |
+| Sync blocked by config/auth | warning notice before any side effects |
+| User cancels sync | cancellation notice + ribbon returns to idle without a success flash |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a concise Notice plus a persisted summary users can query later.
+- Base: a ribbon-only live indicator with no extra panels.
+- Bad: reintroducing developer-console spam or a permanent status bar line just to show progress.
+
+### 6. Tests Required
+
+- Clicking the ribbon button should not create a status-bar item.
+- Failing sync should leave a failed summary in plugin data.
+- Partial sync should drive the ribbon into warning state before it returns to idle.
+- Success should auto-reset the ribbon button back to idle after the short success window.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+- show `Feishu Sync: ...` in the status bar while also logging the same state transitions in multiple layers
+
+#### Correct
+
+- keep one transient UI path for runtime state and one persisted summary for later inspection

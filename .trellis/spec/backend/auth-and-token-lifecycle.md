@@ -92,3 +92,78 @@ The current runtime is fail-fast. New abstractions may wrap errors, but they mus
 - Re-run `node sync.js` and confirm that `config.json` is updated again with a fresh token pair before sync proceeds.
 - Verify that the callback listener only accepts the configured path and rejects missing `code`.
 - Verify that no committed file ever contains live values for `appSecret`, `userAccessToken`, or `refreshToken`.
+
+## Scenario: Obsidian Plugin Token Refresh Transport
+
+### 1. Scope / Trigger
+
+- Trigger: user-token refresh now runs inside the Obsidian desktop plugin runtime, where browser `fetch()` calls from `app://obsidian.md` can fail CORS preflight.
+
+### 2. Signatures
+
+- [`src/oauth/token-manager.ts`](../../../src/oauth/token-manager.ts)
+  - `getValidAccessToken(clientId, clientSecret)`
+  - `forceRefresh(clientId, clientSecret)`
+  - `refreshAccessToken(refreshToken, clientId, clientSecret)`
+- [`src/main.ts`](../../../src/main.ts)
+  - `verifyFeishuConnection()`
+  - `startSync()`
+
+### 3. Contracts
+
+- Token refresh in plugin runtime must use Obsidian `requestUrl`, not browser `fetch`.
+- Refresh requests must post to `https://open.feishu.cn/open-apis/authen/v2/oauth/token`.
+- Request body must include:
+  - `grant_type=refresh_token`
+  - `client_id`
+  - `client_secret`
+  - `refresh_token`
+- If Feishu rotates the refresh token, the new value becomes the stored source of truth immediately.
+
+### 4. Validation & Error Matrix
+
+| Case | Expected behavior |
+|------|-------------------|
+| Token still valid | return stored access token without network refresh |
+| Token expired | refresh through `requestUrl`, persist updated token pair, then continue |
+| Refresh returns HTTP 4xx/5xx | fail sync start with a surfaced error |
+| Refresh payload lacks `access_token` | treat as failure, do not continue upload |
+| No stored `refreshToken` | block sync and ask the user to authorize |
+
+### 5. Good / Base / Bad Cases
+
+- Good: sync button calls a plugin-level token validation step before building sync config.
+- Base: access token refresh remains local-plugin state and is persisted in plugin data.
+- Bad: refresh logic depends on browser CORS behavior or silently falls back to stale tokens.
+
+### 6. Tests Required
+
+- Expire the stored token, start sync, and verify the plugin refreshes through `requestUrl` before upload starts.
+- Remove `refreshToken` and verify sync stops before any Feishu Drive request is made.
+- Simulate an HTTP refresh failure and verify the surfaced error mentions token refresh instead of a generic sync failure.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+await fetch('https://open.feishu.cn/open-apis/authen/v2/refresh_token', {
+  method: 'POST',
+  body: JSON.stringify({ grant_type: 'refresh_token', refresh_token }),
+});
+```
+
+#### Correct
+
+```ts
+await requestUrl({
+  url: 'https://open.feishu.cn/open-apis/authen/v2/oauth/token',
+  method: 'POST',
+  body: JSON.stringify({
+    grant_type: 'refresh_token',
+    client_id,
+    client_secret,
+    refresh_token,
+  }),
+});
+```

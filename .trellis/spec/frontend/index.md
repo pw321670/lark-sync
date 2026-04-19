@@ -6,15 +6,19 @@
 
 ## Current Repo Reality
 
-- There is no plugin code, settings tab, command registration, or React UI in the repository yet.
-- `auth.js` and `sync.js` are the current behavioral contract for authorization and sync.
-- `config.example.json` is the source of truth for which settings must exist, even if the future plugin stores them differently.
-- `README.md` and `.gitignore` confirm the current operator flow: copy config, authorize once, run sync, keep secrets and sync state out of version control.
+- The plugin shell now exists in `src/main.ts`, `src/settings.ts`, `src/oauth/*`, `src/sync/*`, and `src/ui/*`.
+- The active user entrypoints are:
+  - a left-ribbon sync button,
+  - command palette commands,
+  - a settings tab,
+  - Notice-based completion and error feedback.
+- `legacy/auth.js` and `legacy/sync.js` are still the behavioral baseline for auth and sync semantics.
+- `config/config.example.json` remains the migration source of truth for required settings fields, even though the plugin stores them differently now.
 
-This directory is therefore partly descriptive and partly forward-looking:
+This directory is therefore both descriptive and operational:
 
-- **Current reality** sections capture behavior that must not be broken during migration.
-- **Forward-looking rules** define how the plugin layer should be designed when implementation begins.
+- **Current reality** sections describe the code that exists today.
+- **Forward-looking rules** constrain the remaining migration work so the plugin does not drift away from the legacy sync contract.
 
 ---
 

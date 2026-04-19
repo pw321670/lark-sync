@@ -4,17 +4,18 @@ This backend layer documents the current standalone Node.js runtime that syncs a
 
 ## Current Runtime Snapshot
 
-- Source anchors:
-  - [`auth.js`](../../../auth.js): local OAuth callback server, browser launch, token exchange, `config.json` persistence.
-  - [`sync.js`](../../../sync.js): token refresh, recursive vault scan, exclude matching, folder creation, delete-and-reupload sync, `state.json` persistence.
-  - [`config.example.json`](../../../config.example.json): stable configuration contract that future settings UIs must preserve or map explicitly.
-  - [`README.md`](../../../README.md): direct `node auth.js` and `node sync.js` execution model on Node.js 18+.
-  - [`.gitignore`](../../../.gitignore): `config.json` and `state.json` are local-only runtime files.
+- Legacy anchors:
+  - [`legacy/auth.js`](../../../legacy/auth.js): local OAuth callback server, browser launch, token exchange, JSON config persistence.
+  - [`legacy/sync.js`](../../../legacy/sync.js): token refresh, recursive vault scan, exclude matching, folder creation, delete-and-reupload sync, `state.json` persistence.
+- Current plugin-side extraction:
+  - [`src/oauth`](../../../src/oauth): Feishu OAuth flow, token refresh orchestration, plugin-backed auth storage.
+  - [`src/sync`](../../../src/sync): Obsidian vault adapter, sync coordinator, upload manager, and Feishu Drive client.
+  - [`src/main.ts`](../../../src/main.ts): the plugin shell that validates config, refreshes access tokens before sync, and starts the coordinator.
+  - [`config/config.example.json`](../../../config/config.example.json): compatibility baseline for required settings concepts.
 - Runtime assumptions:
-  - There is no `package.json`, build system, or framework bootstrap in the repository root today.
-  - The scripts rely on Node.js 18+ globals such as `fetch`, `Blob`, and `FormData`.
-  - State is file-based and mutable: `config.json` stores credentials and runtime settings; `state.json` stores per-file incremental sync state.
-  - The current backend is fail-fast and imperative rather than modular or service-oriented.
+  - The project now has an Obsidian plugin build (`package.json`, `build/esbuild.config.mjs`, `build/tsconfig.json`).
+  - The live sync runtime is desktop-first and uses Obsidian APIs for vault access.
+  - The plugin still carries some prototype-era behavior, especially around sync-state persistence, which remains intentionally simpler than the legacy standalone `state.json` flow.
 
 ## Guides
 

@@ -112,3 +112,57 @@ These limitations are part of the current runtime behavior and must be changed d
 - Re-run sync without changing a file and verify it is skipped based on `size` and `mtimeMs`.
 - Modify a file's contents and verify its `state.json` entry receives a new `uploadedAt`.
 - Test on Windows-style paths and verify the stored state keys still use `/`.
+
+## Scenario: Obsidian Vault Reads Must Stay Vault-Relative
+
+### 1. Scope / Trigger
+
+- Trigger: the plugin version hit a real runtime failure where folder creation worked but every file upload failed during file reads.
+
+### 2. Signatures
+
+- `src/sync/obsidian-adapter.ts`
+  - `buildSyncConfig({ config, auth })`
+- `src/main.ts`
+  - `initSyncCoordinator()`
+- `src/sync/sync-coordinator.ts`
+  - constructor `({ vault, stateStorage })`
+  - `startSync(config)`
+
+### 3. Contracts
+
+- Obsidian file enumeration produces vault-relative paths such as `Folder/Note.md`.
+- File reads inside the plugin must use `vault.adapter.readBinary(normalizedVaultPath)` through the vault callback passed into `SyncCoordinator`.
+- Do not reinterpret vault-relative paths as OS absolute paths inside the plugin runtime.
+- `SyncCoordinator` and `UploadManager` must treat `relPath` as the only file-read key in the Obsidian runtime.
+
+### 4. Validation & Error Matrix
+
+| Input path | Expected behavior |
+|------------|-------------------|
+| `Welcome.md` | read through `vault.adapter.readBinary('Welcome.md')` |
+| `00-inbox/note.md` | read through `vault.adapter.readBinary('00-inbox/note.md')` |
+| empty path | fail immediately with a local validation error |
+| path mixed with OS-specific absolute path assumptions | reject as an implementation bug |
+
+### 5. Good / Base / Bad Cases
+
+- Good: vault-relative path is normalized once and reused end-to-end.
+- Base: sync state keys still use vault-relative slash-separated paths.
+- Bad: build a path with Node `path.join()` against an undefined base path inside the plugin or store a second absolute-path field for reads.
+
+### 6. Tests Required
+
+- Sync a root-level file and a nested file from an actual Obsidian vault.
+- Verify file reads succeed without requiring a local absolute filesystem path.
+- Re-run sync on Windows-style vault contents and confirm no `path argument must be of type string` error appears.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+- treat `file.path` from Obsidian as if it were a Node absolute path
+
+#### Correct
+
+- keep `file.path` vault-relative and hand it directly to `vault.adapter.readBinary()` after slash normalization

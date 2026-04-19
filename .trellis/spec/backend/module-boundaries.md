@@ -68,3 +68,58 @@ This project is still a two-script prototype, but the backend logic already fall
   - create missing folders before uploading files,
   - delete same-name remote files before re-upload,
   - persist `state.json` with the same per-path fields.
+
+## Scenario: Active Module Set After Cleanup
+
+### 1. Scope / Trigger
+
+- Trigger: the plugin-side sync implementation had grown duplicate scanner, worker, progress, and alternate API layers that were not on the live execution path.
+
+### 2. Signatures
+
+- Active modules:
+  - `src/sync/obsidian-adapter.ts`
+  - `src/sync/sync-coordinator.ts`
+  - `src/sync/upload-manager.ts`
+  - `src/sync/feishu-client.ts`
+  - `src/sync/state-tracker.ts`
+- Removed from the live implementation:
+  - worker wrappers,
+  - alternate scanners and filters,
+  - unused progress-display/status-bar paths,
+  - example-only sync modules.
+
+### 3. Contracts
+
+- One runtime path should exist for vault scan, upload orchestration, and result reporting.
+- Experimental or future-facing modules must not remain under `src/` if they are not wired into the current plugin.
+
+### 4. Validation & Error Matrix
+
+| Case | Expected behavior |
+|------|-------------------|
+| A module is not imported from the live entry path | delete or move it out of the runtime tree |
+| UI helper duplicates another runtime surface | keep the active one and remove the duplicate |
+| A new abstraction layer only wraps a single call with no new contract | inline or remove it |
+
+### 5. Good / Base / Bad Cases
+
+- Good: one thin sync stack with clear ownership.
+- Base: helper modules exist only when they hold a distinct contract.
+- Bad: keep speculative modules in `src/` “for later” while they continue to bloat the current codebase.
+
+### 6. Tests Required
+
+- `npm run build` after deletion of unused modules.
+- Verify active imports no longer reference removed files.
+- Verify ribbon sync, settings, and end-to-end sync still build from the reduced tree.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+- keep multiple scanner/filter/worker implementations in the active source tree when only one path is executed
+
+#### Correct
+
+- reduce the runtime tree to the modules that are actually reachable from `src/main.ts`

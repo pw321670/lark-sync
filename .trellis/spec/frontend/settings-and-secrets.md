@@ -132,3 +132,126 @@ These are forward-looking rules for the standalone-to-plugin transition:
 - Requiring a manual `vaultPath` input for the common in-vault plugin flow
 - Mixing sync bookkeeping state into the same model the settings tab edits
 - Logging raw Feishu token responses in user-visible UI
+
+## Scenario: Current Plugin Data And OAuth Rebinding
+
+### 1. Scope / Trigger
+
+- Trigger: the plugin now stores config and auth in Obsidian plugin data, and OAuth helpers must stay bound to the latest in-memory model.
+
+### 2. Signatures
+
+- `src/main.ts`
+  - `updateConfig(patch)`
+  - `clearAuthorization()`
+  - `ensureValidAccessToken()`
+- `src/oauth/auth-storage.ts`
+  - `read()`
+  - `write(data)`
+  - `clear()`
+
+### 3. Contracts
+
+- `pluginData.config` is user-editable settings.
+- `pluginData.auth` is managed runtime auth state.
+- `AuthStorage` must read and write through a getter to the current `pluginData.auth` object, not a stale captured object.
+- Config updates must recreate OAuth helpers so later token refreshes use the latest `appId`, `appSecret`, and `redirectUri`.
+
+### 4. Validation & Error Matrix
+
+| Case | Expected behavior |
+|------|-------------------|
+| User changes auth config | OAuth helper is reinitialized |
+| User clears authorization | access token, refresh token, and expiry are all cleared |
+| Sync starts with expired token | plugin refreshes token before passing auth into sync core |
+| Missing auth | settings remain editable, but sync stays blocked |
+
+### 5. Good / Base / Bad Cases
+
+- Good: config and auth are distinct, and runtime-managed fields are not hand-edited in the settings form.
+- Base: tokens still live in plugin data for now.
+- Bad: capture `pluginData.auth` once, then keep mutating an object that is no longer the current saved auth state.
+
+### 6. Tests Required
+
+- Update auth config, then authorize or refresh token, and verify the latest settings are used.
+- Clear authorization and verify all managed auth fields become empty/null.
+- Start sync after token expiry and verify a refreshed access token is persisted before sync begins.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+- `new AuthStorage(this.pluginData.auth, ...)`
+
+#### Correct
+
+- `new AuthStorage(() => this.pluginData.auth, ...)`
+
+## Scenario: Settings Tab Composition Boundary
+
+### 1. Scope / Trigger
+
+- Trigger: the plugin settings UI now spans auth, sync scope, diagnostics, and managed auth actions; a single monolithic `src/settings.ts` becomes hard to maintain.
+
+### 2. Signatures
+
+- [`src/settings.ts`](../../../src/settings.ts)
+  - re-export only
+- [`src/settings/setting-tab.ts`](../../../src/settings/setting-tab.ts)
+  - `class FeishuSyncSettingTab`
+- [`src/settings/sections.ts`](../../../src/settings/sections.ts)
+  - `renderFeishuAppSection(context)`
+  - `renderSyncStrategySection(context)`
+  - `renderAdvancedSection(context)`
+  - `renderStatusSection(context)`
+- [`src/settings/actions.ts`](../../../src/settings/actions.ts)
+  - `testConnection(plugin, button?)`
+
+### 3. Contracts
+
+- `src/settings.ts` stays as the stable import surface for `src/main.ts`.
+- UI composition lives in `setting-tab.ts` and section renderers, not in the plugin main class.
+- Section action handlers must call public plugin methods such as `authorizeFeishu()` and `verifyFeishuConnection()` instead of reaching into private fields like `plugin['oauth']`.
+- Managed auth state stays non-editable; the settings UI may clear auth or trigger authorization, but it must not expose token text fields.
+- The current personal-plugin workflow intentionally omits config import/export/reset actions. New settings work should justify any return of that surface area.
+
+### 4. Validation & Error Matrix
+
+| Case | Expected behavior |
+|------|-------------------|
+| Required Feishu config missing | test connection surfaces field-level validation error |
+| User has no refresh token | settings action starts OAuth instead of asking for manual token entry |
+| Clear authorization confirmed | plugin wipes managed auth fields and refreshes the visible status |
+| Settings saved | plugin rebinds OAuth helpers against the latest config |
+
+### 5. Good / Base / Bad Cases
+
+- Good: `src/settings.ts` is a tiny re-export and UI responsibilities are split by concern.
+- Base: section renderers may still be in a single `sections.ts` file as long as actions and helpers stay separate and the section set stays intentionally small.
+- Bad: settings code uses string-index access into private plugin internals or mixes DOM file IO, auth flows, and section layout into one class.
+
+### 6. Tests Required
+
+- Open settings and confirm each section renders after the split.
+- Click `Test connection` with valid config and verify it authorizes or refreshes token successfully.
+- Clear auth from the settings tab and verify the authorization status changes immediately.
+- Save auth-related settings and verify later connection checks use the updated values.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+if (!this.plugin['oauth']) {
+  this.plugin['initOAuth']();
+}
+const result = await this.plugin['oauth'].authorize();
+```
+
+#### Correct
+
+```ts
+const result = await plugin.authorizeFeishu();
+await plugin.verifyFeishuConnection();
+```

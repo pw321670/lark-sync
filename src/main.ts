@@ -1,6 +1,15 @@
-import { Notice, Plugin } from "obsidian";
+import { Notice, Plugin } from 'obsidian';
 
-import { buildSyncPreview } from "./utils/preview";
+import { FeishuOAuth, AuthStorage, type OAuthResult } from './oauth';
+import { FeishuSyncSettingTab } from './settings';
+import {
+  SyncCoordinator,
+  SyncCancelledError,
+  buildSyncConfig,
+  toUiSyncSummary,
+  type SyncResult,
+} from './sync';
+import { NotificationManager, SyncButton, registerSyncCommands } from './ui';
 import {
   DEFAULT_PLUGIN_DATA,
   getMissingConfigFields,
@@ -8,25 +17,13 @@ import {
   toLegacyConfig,
   type FeishuSyncConfig,
   type PluginData,
-  type SyncSummary
-} from "./utils/contracts";
-import { normalizeExcludeEntries } from "./utils/path-utils";
-import { FeishuSyncSettingTab } from "./settings";
-import { FeishuOAuth, AuthStorage } from "./oauth";
-import { SyncButton, registerSyncCommands, NotificationManager } from "./ui";
-import {
-  SyncCoordinator,
-  ObsidianVaultAdapter,
-  ObsidianFileReader,
-  buildSyncConfig,
-  toUiSyncSummary,
-  type SyncProgress,
-  type SyncResult as CoordinatorSyncResult,
-} from "./sync";
+  type SyncSummary,
+} from './utils/contracts';
+import { normalizeExcludeEntries } from './utils/path-utils';
+import { buildSyncPreview } from './utils/preview';
 
 export default class SyncObsidianFeishuPlugin extends Plugin {
   private pluginData: PluginData = DEFAULT_PLUGIN_DATA;
-  private statusBarEl: HTMLElement | null = null;
   private oauth: FeishuOAuth | null = null;
   private syncButton: SyncButton | null = null;
   private notificationManager: NotificationManager | null = null;
@@ -35,127 +32,22 @@ export default class SyncObsidianFeishuPlugin extends Plugin {
   async onload(): Promise<void> {
     this.pluginData = mergePluginData(await this.loadData());
 
-    this.statusBarEl = this.addStatusBarItem();
-    this.statusBarEl.addClass("sync-obsidian-feishu-status");
-
-    // 初始化通知管理器
     this.notificationManager = new NotificationManager();
-
-    // 初始化 OAuth
     this.initOAuth();
-
-    // 初始化同步协调器
     this.initSyncCoordinator();
-
-    // 初始化 UI 组件
     this.initUIComponents();
 
     this.addSettingTab(new FeishuSyncSettingTab(this.app, this));
     this.registerCommands();
-    this.updateStatusBar();
   }
 
   onunload(): void {
-    this.statusBarEl = null;
     this.syncButton?.destroy();
 
-    // 清理同步协调器
     if (this.syncCoordinator) {
       this.syncCoordinator.destroy().catch(console.error);
       this.syncCoordinator = null;
     }
-  }
-
-  private initUIComponents(): void {
-    // 初始化同步按钮
-    this.syncButton = new SyncButton(this, {
-      onClick: async () => this.startSync()
-    });
-
-    // 注册同步相关命令
-    registerSyncCommands(this, {
-      startSync: async () => this.startSync(),
-      pauseSync: async () => this.pauseSync(),
-      resumeSync: async () => this.resumeSync(),
-      cancelSync: async () => this.cancelSync(),
-      openSettings: () => this.openSettings(),
-      showStatus: () => this.showLastSyncSummary()
-    });
-  }
-
-  private async startSync(): Promise<void> {
-    // 检查配置
-    const missing = getMissingConfigFields(this.pluginData.config);
-    if (missing.length > 0) {
-      this.notificationManager?.needsConfiguration(missing);
-      return;
-    }
-
-    // 检查授权
-    if (!this.pluginData.auth.refreshToken) {
-      this.notificationManager?.needsAuthorization();
-      return;
-    }
-
-    // 检查协调器是否已初始化
-    if (!this.syncCoordinator) {
-      this.notificationManager?.error("Sync coordinator not initialized");
-      return;
-    }
-
-    // 检查是否已有同步进行中
-    if (this.syncCoordinator.isSyncing()) {
-      this.notificationManager?.concurrentSyncBlocked();
-      return;
-    }
-
-    this.notificationManager?.syncStarted();
-    this.syncButton?.setSyncing();
-
-    try {
-      // 构建同步配置
-      const syncConfig = buildSyncConfig({
-        vaultPath: this.getVaultDisplayPath(),
-        config: this.pluginData.config,
-        auth: this.pluginData.auth,
-      });
-
-      // 启动同步
-      await this.syncCoordinator.startSync(syncConfig);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.notificationManager?.error(`Failed to start sync: ${message}`);
-      this.syncButton?.setError();
-      setTimeout(() => this.syncButton?.setIdle(), 3000);
-    }
-  }
-
-  private async pauseSync(): Promise<void> {
-    if (!this.syncCoordinator || !this.syncCoordinator.isSyncing()) {
-      return;
-    }
-
-    await this.syncCoordinator.pauseSync();
-    this.notificationManager?.syncPaused();
-  }
-
-  private async resumeSync(): Promise<void> {
-    if (!this.syncCoordinator || !this.syncCoordinator.isSyncPaused()) {
-      return;
-    }
-
-    await this.syncCoordinator.resumeSync();
-    this.notificationManager?.syncResumed();
-  }
-
-  private async cancelSync(): Promise<void> {
-    if (!this.syncCoordinator || !this.syncCoordinator.isSyncing()) {
-      return;
-    }
-
-    await this.syncCoordinator.cancelSync();
-    this.notificationManager?.syncCancelled();
-    this.syncButton?.setIdle();
   }
 
   getPluginData(): PluginData {
@@ -173,146 +65,199 @@ export default class SyncObsidianFeishuPlugin extends Plugin {
       config: {
         ...this.pluginData.config,
         ...patch,
-        exclude: patch.exclude ? normalizeExcludeEntries(patch.exclude) : this.pluginData.config.exclude
-      }
+        exclude: patch.exclude
+          ? normalizeExcludeEntries(patch.exclude)
+          : this.pluginData.config.exclude,
+      },
     };
 
     await this.persistPluginData();
+    this.initOAuth();
   }
 
   async clearAuthorization(): Promise<void> {
     this.pluginData = {
       ...this.pluginData,
       auth: {
-        userAccessToken: "",
-        refreshToken: "",
+        userAccessToken: '',
+        refreshToken: '',
         connectedAt: null,
-        expiresAt: null
-      }
+        expiresAt: null,
+      },
     };
 
     await this.persistPluginData();
-    new Notice("Cleared locally stored Feishu auth state.");
+    new Notice('Cleared locally stored Feishu auth state.');
+  }
+
+  private initUIComponents(): void {
+    this.syncButton = new SyncButton(this, {
+      onClick: async () => this.startSync(),
+    });
+
+    registerSyncCommands(this, {
+      startSync: async () => this.startSync(),
+      cancelSync: async () => this.cancelSync(),
+      openSettings: () => this.openSettings(),
+      showStatus: () => this.showLastSyncSummary(),
+    });
   }
 
   private initOAuth(): void {
     const { config } = this.pluginData;
+    this.oauth = null;
+
     if (!config.appId || !config.appSecret || !config.redirectUri) {
       return;
     }
 
-    // 创建存储适配器
-    // 注意：直接传递 this.pluginData.auth 的引用，确保数据修改能够同步
-    const storage = new AuthStorage(
-      this.pluginData.auth,
-      async () => {
-        // 直接保存当前的 pluginData，不需要重新创建对象
-        await this.persistPluginData();
-      }
-    );
+    const storage = new AuthStorage(() => this.pluginData.auth, async () => {
+      await this.persistPluginData();
+    });
 
     this.oauth = new FeishuOAuth(config, storage);
   }
 
+  async authorizeFeishu(): Promise<OAuthResult> {
+    this.initOAuth();
+
+    if (!this.oauth) {
+      return {
+        success: false,
+        error: 'Feishu OAuth is not configured yet.',
+      };
+    }
+
+    return this.oauth.authorize();
+  }
+
+  async verifyFeishuConnection(): Promise<void> {
+    await this.ensureValidAccessToken();
+  }
+
   private initSyncCoordinator(): void {
-    // 创建 Obsidian Vault 适配器
-    const vaultAdapter = new ObsidianVaultAdapter(this.app as any);
-    const fileReader = new ObsidianFileReader(this.app as any);
-
-    // 创建同步协调器
-    this.syncCoordinator = new SyncCoordinator(
-      vaultAdapter,
-      { verbose: false },
-      fileReader
-    );
-
-    // 设置事件监听器
-    this.syncCoordinator.onProgress((progress: SyncProgress) => {
-      // 更新进度显示（可以添加进度条等 UI）
-      this.updateStatusBarWithProgress(progress);
+    this.syncCoordinator = new SyncCoordinator({
+      getFiles: () =>
+        this.app.vault.getFiles().map((file) => ({
+          path: file.path,
+          stat: {
+            size: file.stat.size,
+            mtime: file.stat.mtime,
+            mtimeMs: file.stat.mtime,
+          },
+        })),
+      readBinary: (path) => this.app.vault.adapter.readBinary(path.replace(/\\/g, '/')),
     });
 
-    this.syncCoordinator.onComplete((result: CoordinatorSyncResult) => {
-      const summary = toUiSyncSummary(result);
-      this.notificationManager?.syncCompleted(summary);
-      this.syncButton?.setSuccess();
-      setTimeout(() => this.syncButton?.setIdle(), 3000);
-    });
-
-    this.syncCoordinator.onError((error) => {
-      this.notificationManager?.error(`Sync error: ${error.message}`);
-      this.syncButton?.setError();
-    });
-
-    // 初始化协调器
-    this.syncCoordinator.initialize().catch((err) => {
-      console.error('Failed to initialize SyncCoordinator:', err);
+    this.syncCoordinator.initialize().catch((error) => {
+      console.error('Failed to initialize SyncCoordinator:', error);
     });
   }
 
-  private updateStatusBarWithProgress(progress: SyncProgress): void {
-    if (!this.statusBarEl) {
+  private async startSync(): Promise<void> {
+    const missing = getMissingConfigFields(this.pluginData.config);
+    if (missing.length > 0) {
+      this.notificationManager?.needsConfiguration(missing);
       return;
     }
 
-    const status = progress.status;
-    let text = 'Feishu Sync: ';
-
-    switch (status) {
-      case 'scanning':
-        text += `Scanning... (${progress.processedCount}/${progress.totalCount})`;
-        break;
-      case 'syncing':
-        text += `Syncing... ${progress.uploadedCount} uploaded`;
-        if (progress.failedCount > 0) {
-          text += `, ${progress.failedCount} failed`;
-        }
-        break;
-      case 'paused':
-        text += 'Paused';
-        break;
-      case 'completed':
-        text += `Done: ${progress.uploadedCount} uploaded`;
-        break;
-      case 'error':
-        text += 'Error';
-        break;
-      default:
-        text += 'Ready';
+    if (!this.pluginData.auth.refreshToken) {
+      this.notificationManager?.needsAuthorization();
+      return;
     }
 
-    this.statusBarEl.setText(text);
+    if (!this.syncCoordinator) {
+      this.notificationManager?.error('Sync coordinator not initialized');
+      return;
+    }
+
+    if (this.syncCoordinator.isSyncing()) {
+      this.notificationManager?.concurrentSyncBlocked();
+      return;
+    }
+
+    this.notificationManager?.syncStarted();
+    this.syncButton?.setSyncing();
+
+    try {
+      await this.ensureValidAccessToken();
+
+      const syncConfig = buildSyncConfig({
+        config: this.pluginData.config,
+        auth: this.pluginData.auth,
+      });
+
+      const result = await this.syncCoordinator.startSync(syncConfig);
+      const summary = toUiSyncSummary(result);
+
+      await this.storeSyncSummary(result);
+      this.notificationManager?.syncCompleted(summary);
+
+      if (summary.status === 'partial') {
+        this.syncButton?.setWarning();
+        return;
+      }
+
+      if (summary.status === 'failed') {
+        this.syncButton?.setError();
+        return;
+      }
+
+      this.syncButton?.setSuccess();
+    } catch (error) {
+      if (error instanceof SyncCancelledError) {
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      await this.storeSyncFailure(message);
+      this.notificationManager?.error(`Failed to start sync: ${message}`);
+      this.syncButton?.setError();
+    }
   }
 
-  private getOAuth(): FeishuOAuth | null {
-    return this.oauth;
+  private async ensureValidAccessToken(): Promise<void> {
+    if (!this.oauth) {
+      this.initOAuth();
+    }
+
+    if (!this.oauth) {
+      throw new Error('Feishu OAuth is not configured');
+    }
+
+    const tokenResult = await this.oauth.getAccessToken();
+    if (!tokenResult.success || !tokenResult.accessToken) {
+      throw new Error(tokenResult.error || 'Failed to obtain a valid Feishu access token');
+    }
+  }
+
+  private async cancelSync(): Promise<void> {
+    if (!this.syncCoordinator || !this.syncCoordinator.isSyncing()) {
+      return;
+    }
+
+    this.syncCoordinator.cancelSync();
+    this.notificationManager?.syncCancelled();
+    this.syncButton?.setIdle();
   }
 
   private registerCommands(): void {
-    // 核心功能命令
     this.addCommand({
-      id: "open-feishu-sync-settings",
-      name: "Open Feishu sync settings",
-      callback: () => this.openSettings()
+      id: 'open-feishu-sync-settings',
+      name: 'Open Feishu sync settings',
+      callback: () => this.openSettings(),
     });
 
     this.addCommand({
-      id: "preview-feishu-sync-scope",
-      name: "Preview Feishu sync scope",
-      callback: async () => this.previewSyncScope()
+      id: 'preview-feishu-sync-scope',
+      name: 'Preview Feishu sync scope',
+      callback: async () => this.previewSyncScope(),
     });
 
     this.addCommand({
-      id: "show-last-feishu-sync-summary",
-      name: "Show last Feishu sync summary",
-      callback: () => this.showLastSyncSummary()
-    });
-
-    // 维护命令（不常用，放在后面）
-    this.addCommand({
-      id: "refresh-feishu-token",
-      name: "Refresh Feishu access token (Maintenance)",
-      callback: async () => this.refreshToken()
+      id: 'show-last-feishu-sync-summary',
+      name: 'Show last Feishu sync summary',
+      callback: () => this.showLastSyncSummary(),
     });
   }
 
@@ -330,15 +275,17 @@ export default class SyncObsidianFeishuPlugin extends Plugin {
       return;
     }
 
-    new Notice("Open Settings -> Community plugins -> Sync Obsidian to Feishu to edit plugin settings.");
+    new Notice(
+      'Open Settings -> Community plugins -> Sync Obsidian to Feishu to edit plugin settings.',
+    );
   }
 
   private async previewSyncScope(): Promise<void> {
     const missing = getMissingConfigFields(this.pluginData.config);
     if (missing.length > 0) {
       const summary: SyncSummary = {
-        status: "blocked",
-        message: `Missing required settings: ${missing.join(", ")}`,
+        status: 'blocked',
+        message: `Missing required settings: ${missing.join(', ')}`,
         scannedAt: new Date().toISOString(),
         filesDiscovered: 0,
         excludedCount: 0,
@@ -346,12 +293,12 @@ export default class SyncObsidianFeishuPlugin extends Plugin {
         candidateCount: 0,
         uploadedCount: 0,
         skippedUnchangedCount: 0,
-        failedPath: null
+        failedPath: null,
       };
 
       this.pluginData = {
         ...this.pluginData,
-        lastSync: summary
+        lastSync: summary,
       };
 
       await this.persistPluginData();
@@ -362,20 +309,20 @@ export default class SyncObsidianFeishuPlugin extends Plugin {
 
     const files = this.app.vault.getFiles().map((file) => ({
       path: file.path,
-      size: file.stat.size
+      size: file.stat.size,
     }));
 
     const preview = buildSyncPreview(
       files,
       this.pluginData.config.exclude,
-      this.pluginData.config.maxDirectUploadMB
+      this.pluginData.config.maxDirectUploadMB,
     );
 
     preview.message = `Preview complete: ${preview.candidateCount} candidate file(s), ${preview.excludedCount} excluded, ${preview.oversizedCount} oversized.`;
 
     this.pluginData = {
       ...this.pluginData,
-      lastSync: preview
+      lastSync: preview,
     };
 
     await this.persistPluginData();
@@ -385,7 +332,7 @@ export default class SyncObsidianFeishuPlugin extends Plugin {
   private showLastSyncSummary(): void {
     const summary = this.pluginData.lastSync;
     if (!summary) {
-      new Notice("No Feishu sync preview or run summary is available yet.");
+      new Notice('No Feishu sync preview or run summary is available yet.');
       return;
     }
 
@@ -394,49 +341,69 @@ export default class SyncObsidianFeishuPlugin extends Plugin {
       `Scanned: ${summary.filesDiscovered}`,
       `Candidates: ${summary.candidateCount}`,
       `Excluded: ${summary.excludedCount}`,
-      `Oversized: ${summary.oversizedCount}`
-    ].join(" | ");
+      `Oversized: ${summary.oversizedCount}`,
+    ].join(' | ');
 
     new Notice(details, 9000);
   }
 
   private async persistPluginData(): Promise<void> {
     await this.saveData(this.pluginData);
-    this.updateStatusBar();
   }
 
-  /**
-   * 刷新访问令牌
-   */
-  private async refreshToken(): Promise<void> {
-    if (!this.oauth) {
-      new Notice("请先完成插件配置");
-      return;
-    }
+  private async storeSyncSummary(result: SyncResult): Promise<void> {
+    const success = result.success && result.failedCount === 0;
+    this.pluginData = {
+      ...this.pluginData,
+      lastSync: {
+        status: success ? 'success' : 'failed',
+        message: success
+          ? `Uploaded ${result.uploadedCount} file(s), skipped ${result.skippedCount}.`
+          : result.error || `Failed on ${result.failedFiles[0]?.path || 'unknown file'}.`,
+        scannedAt: new Date().toISOString(),
+        filesDiscovered: result.filesDiscovered,
+        excludedCount: result.excludedCount,
+        oversizedCount: result.oversizedCount,
+        candidateCount: result.candidateCount,
+        uploadedCount: result.uploadedCount,
+        skippedUnchangedCount: result.skippedCount,
+        failedPath: result.failedFiles[0]?.path ?? null,
+      },
+    };
 
-    const hasAuth = await this.oauth.hasAuth();
-    if (!hasAuth) {
-      new Notice("未授权，请先完成授权");
-      return;
-    }
-
-    new Notice("正在刷新访问令牌...");
-
-    const result = await this.oauth.refreshToken();
-
-    if (result.success) {
-      new Notice("访问令牌刷新成功！");
-    } else {
-      new Notice(`访问令牌刷新失败: ${result.error}`);
-    }
+    await this.persistPluginData();
   }
 
-  private updateStatusBar(): void {
-    // 状态栏已禁用 - 不再显示飞书同步状态
-    if (!this.statusBarEl) {
+  private async storeSyncFailure(message: string): Promise<void> {
+    this.pluginData = {
+      ...this.pluginData,
+      lastSync: {
+        status: 'failed',
+        message,
+        scannedAt: new Date().toISOString(),
+        filesDiscovered: 0,
+        excludedCount: 0,
+        oversizedCount: 0,
+        candidateCount: 0,
+        uploadedCount: 0,
+        skippedUnchangedCount: 0,
+        failedPath: null,
+      },
+    };
+
+    await this.persistPluginData();
+  }
+
+  async copyLegacyConfigSnapshot(): Promise<void> {
+    const snapshot = toLegacyConfig(this.pluginData, this.getVaultDisplayPath());
+    const payload = JSON.stringify(snapshot, null, 2);
+
+    if (!navigator.clipboard?.writeText) {
+      new Notice('Clipboard access is not available in this environment.');
       return;
     }
 
-    this.statusBarEl.setText("");
+    await navigator.clipboard.writeText(payload);
+    new Notice('Copied a legacy config snapshot to the clipboard.');
   }
 }
