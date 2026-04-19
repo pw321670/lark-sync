@@ -1,9 +1,5 @@
-import { requestUrl } from 'obsidian';
+import { requestUrl, type RequestUrlParam, type RequestUrlResponse } from 'obsidian';
 
-/**
- * 飞书文档块类型（数字格式）
- * 参考文档：https://open.feishu.cn/document/server-docs/docs/docs-docx-v1/document-block/create
- */
 enum BlockType {
   Page = 1,
   Text = 2,
@@ -15,92 +11,107 @@ enum BlockType {
   Heading6 = 8,
   Bullet = 12,
   Ordered = 13,
-  Code = 15,
-  Quote = 17,
-  Todo = 18,
-  Divider = 19,
-  Table = 22,
-  View = 23,
+  Code = 14,
+  Quote = 15,
+  Todo = 17,
+  Divider = 22,
 }
 
-/**
- * 飞书文档块元素
- */
-interface BlockElement {
-  type: BlockType;
-  // 文本块的内容
-  text_run?: {
+type TextElement = {
+  type: 'text_run';
+  text_run: {
     content: string;
-    elements?: Array<{
-      type: 'text_run' | 'mention_user' | 'mention_doc' | 'file' | 'emoji';
-      text_run?: {
-        content: string;
-        style?: Record<string, unknown>;
-      };
-    }>;
+    style: Record<string, unknown>;
   };
-  // 代码块的内容
-  code?: {
-    language: string;
-    style?: Record<string, unknown>;
-    elements: Array<{
-      type: 'run';
-      code_run: {
-        language: string;
-        content: string;
-      };
-    }>;
-  };
-  // 其他块类型的内容...
-}
+};
 
-/**
- * 创建块请求
- */
-interface CreateBlockRequest {
-  children: Array<{
-    block_type: number;
-    [key: string]: unknown;
-  }>;
-  index?: number;
-}
+type TextBlockContent = {
+  elements: TextElement[];
+  style?: Record<string, unknown>;
+  language?: number;
+  wrap?: boolean;
+  done?: boolean;
+};
 
-/**
- * 创建块响应
- */
-interface CreateBlockResponse {
+type DividerBlockContent = Record<string, never>;
+
+type BlockContentKey =
+  | 'text'
+  | 'heading1'
+  | 'heading2'
+  | 'heading3'
+  | 'heading4'
+  | 'heading5'
+  | 'heading6'
+  | 'bullet'
+  | 'ordered'
+  | 'code'
+  | 'quote'
+  | 'todo'
+  | 'divider';
+
+type DocBlock = {
+  block_type: number;
+} & Partial<Record<BlockContentKey, TextBlockContent | DividerBlockContent>>;
+
+interface ApiEnvelope<T> {
   code: number;
-  msg: string;
-  data?: {
-    items?: Array<{
-      block_type: number;
-      block_id: string;
-      parent_id: string;
-    }>;
+  msg?: string;
+  data?: T;
+}
+
+interface CreateDocumentData {
+  document?: {
+    document_id: string;
+    revision_id: number;
+    title: string;
   };
 }
 
-/**
- * 创建文档请求
- */
+interface DocumentInfoData {
+  document?: {
+    document_id: string;
+    revision_id: number;
+    title: string;
+  };
+}
+
+interface ChildBlockItem {
+  block_id: string;
+  children?: string[];
+  block_type?: number;
+  parent_id?: string;
+}
+
+interface ChildBlockListData {
+  items?: ChildBlockItem[];
+  has_more?: boolean;
+  page_token?: string;
+}
+
+interface BlockMutationData {
+  document_revision_id?: number;
+  client_token?: string;
+  children?: Array<{
+    block_id?: string;
+    parent_id?: string;
+    block_type?: number;
+  }>;
+}
+
 interface CreateDocumentRequest {
   title: string;
   folder_token?: string;
 }
 
-/**
- * 创建文档响应
- */
-interface CreateDocumentResponse {
-  code: number;
-  msg: string;
-  data?: {
-    document?: {
-      document_id: string;
-      revision_id: number;
-      title: string;
-    };
-  };
+interface CreateBlockRequest {
+  children: DocBlock[];
+  index?: number;
+}
+
+interface DeleteBlockChildrenRequest {
+  start_index: number;
+  end_index: number;
 }
 
 export interface CreateDocumentOptions {
@@ -113,34 +124,37 @@ export interface CreateDocumentResult {
 }
 
 export interface UpdateDocumentOptions {
-  // 未来扩展：文档更新选项
+  parentBlockId?: string;
 }
 
-/**
- * 飞书在线文档客户端（API 版本）
- * 使用飞书官方 API 创建和更新飞书在线文档
- *
- * 参考文档：
- * - 创建文档：https://open.feishu.cn/document/server-docs/docs/docs-docx-v1/document/create
- * - 创建块：https://open.feishu.cn/document/server-docs/docs/docs-docx-v1/document-block/create
- */
+export class FeishuDocClientError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly apiCode?: number,
+    readonly apiMessage?: string,
+    readonly isMissing = false,
+    readonly responseText?: string,
+  ) {
+    super(message);
+    this.name = 'FeishuDocClientError';
+  }
+}
+
 export class FeishuDocClient {
+  private readonly baseUrl = 'https://open.feishu.cn/open-apis/docx/v1';
+
   constructor(private readonly userAccessToken: string) {}
 
-  /**
-   * 检查可用性（API 模式总是可用）
-   */
   async checkAvailability(): Promise<boolean> {
     return true;
   }
 
-  /**
-   * 创建飞书在线文档
-   * @param title 文档标题
-   * @param markdownContent Markdown 格式的文档内容
-   * @param options 创建选项
-   * @returns 文档 ID 和 URL
-   */
+  async documentExists(docId: string): Promise<boolean> {
+    const document = await this.getDocumentInfo(docId);
+    return Boolean(document);
+  }
+
   async createDocument(
     title: string,
     markdownContent: string,
@@ -152,328 +166,363 @@ export class FeishuDocClient {
       parentFolderToken: options?.parentFolderToken,
     });
 
-    try {
-      // 步骤 1: 创建空文档
-      const docId = await this.createEmptyDocument(title, options?.parentFolderToken);
-      console.log('[FeishuDocClient] 空文档创建成功:', { docId, title });
+    const docId = await this.createEmptyDocument(title, options?.parentFolderToken);
+    await this.replaceDocumentContent(docId, markdownContent, {
+      parentBlockId: docId,
+    });
 
-      // 步骤 2: 将 Markdown 转换为文档块
-      const blocks = this.convertMarkdownToBlocks(markdownContent);
-      console.log('[FeishuDocClient] Markdown 转换完成，生成块数:', blocks.length);
-      console.log('[FeishuDocClient] 生成的块结构:', JSON.stringify(blocks, null, 2));
-
-      // 步骤 3: 批量添加块到文档
-      if (blocks.length > 0) {
-        await this.addBlocksToDocument(docId, docId, blocks);
-        console.log('[FeishuDocClient] 内容块添加成功');
-      }
-
-      const result: CreateDocumentResult = {
-        docId,
-        docUrl: `https://www.feishu.cn/docx/${docId}`,
-      };
-
-      console.log('[FeishuDocClient] 文档创建完成:', {
-        docId: result.docId,
-        docUrl: result.docUrl,
-      });
-
-      return result;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error('[FeishuDocClient] 文档创建失败:', {
-        title,
-        error: errorMsg,
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-      throw new Error(`创建飞书文档失败 (${title}): ${errorMsg}`);
-    }
+    return {
+      docId,
+      docUrl: this.buildDocumentUrl(docId),
+    };
   }
 
-  /**
-   * 创建空文档
-   */
-  private async createEmptyDocument(title: string, folderToken?: string): Promise<string> {
-    const url = 'https://open.feishu.cn/open-apis/docx/v1/documents';
+  async updateDocument(
+    docId: string,
+    markdownContent: string,
+    options?: UpdateDocumentOptions,
+  ): Promise<void> {
+    const document = await this.getDocumentInfo(docId);
+    if (!document) {
+      throw new FeishuDocClientError(
+        `Document not found: ${docId}`,
+        404,
+        1770002,
+        'not found',
+        true,
+      );
+    }
 
-    const requestBody: CreateDocumentRequest = {
-      title: title.substring(0, 800), // 标题最长 800 字符
+    await this.replaceDocumentContent(docId, markdownContent, options);
+  }
+
+  invalidateAvailabilityCache(): void {}
+
+  private async createEmptyDocument(title: string, folderToken?: string): Promise<string> {
+    const payload: CreateDocumentRequest = {
+      title: title.substring(0, 800),
     };
 
     if (folderToken) {
-      requestBody.folder_token = folderToken;
+      payload.folder_token = folderToken;
     }
 
-    console.log('[FeishuDocClient] 创建空文档请求:', {
-      url,
-      body: requestBody,
-    });
-
-    let response;
-    try {
-      response = await requestUrl({
-        url,
+    const data = await this.requestApi<CreateDocumentData>(
+      {
+        url: `${this.baseUrl}/documents`,
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.userAccessToken}`,
-        },
-        contentType: 'application/json; charset=utf-8',
-        body: JSON.stringify(requestBody),
-      });
-    } catch (error: any) {
-      console.error('[FeishuDocClient] HTTP 请求失败:', {
-        message: error.message,
-        status: error.status,
-        errorCode: error.errorCode,
-        responseText: error.responseText,
-      });
-      throw error;
+        body: JSON.stringify(payload),
+      },
+      'Create empty document',
+    );
+
+    const docId = data.document?.document_id;
+    if (!docId) {
+      throw new FeishuDocClientError(
+        'Create empty document returned no document_id',
+        200,
+        undefined,
+        undefined,
+        false,
+      );
     }
 
-    console.log('[FeishuDocClient] 创建空文档响应:', {
-      status: response.status,
-      text: response.text,
-      json: response.json,
+    console.log('[FeishuDocClient] 空文档创建成功:', {
+      docId,
+      title: data.document?.title,
     });
 
-    const data = response.json as CreateDocumentResponse;
-
-    if (response.status !== 200) {
-      console.error('[FeishuDocClient] 创建空文档失败 - HTTP 错误:', {
-        status: response.status,
-        responseText: response.text,
-        responseJson: data,
-      });
-      throw new Error(`HTTP ${response.status}: ${JSON.stringify(data)}`);
-    }
-
-    if (data.code !== 0) {
-      console.error('[FeishuDocClient] 创建空文档失败 - API 错误:', {
-        code: data.code,
-        msg: data.msg,
-        fullResponse: data,
-      });
-      throw new Error(`API 错误 ${data.code}: ${data.msg}`);
-    }
-
-    if (!data.data?.document?.document_id) {
-      console.error('[FeishuDocClient] 创建空文档失败 - 缺少 document_id:', {
-        fullResponse: data,
-      });
-      throw new Error(`响应中缺少 document_id: ${JSON.stringify(data)}`);
-    }
-
-    return data.data.document.document_id;
+    return docId;
   }
 
-  /**
-   * 添加块到文档
-   */
+  private async getDocumentInfo(
+    docId: string,
+  ): Promise<{ documentId: string; revisionId: number; title: string } | null> {
+    try {
+      const data = await this.requestApi<DocumentInfoData>(
+        {
+          url: `${this.baseUrl}/documents/${docId}`,
+          method: 'GET',
+        },
+        'Get document info',
+      );
+
+      const document = data.document;
+      if (!document?.document_id) {
+        return null;
+      }
+
+      return {
+        documentId: document.document_id,
+        revisionId: document.revision_id,
+        title: document.title,
+      };
+    } catch (error) {
+      if (error instanceof FeishuDocClientError && error.isMissing) {
+        return null;
+      }
+
+      throw error;
+    }
+  }
+
+  private async replaceDocumentContent(
+    docId: string,
+    markdownContent: string,
+    options?: UpdateDocumentOptions,
+  ): Promise<void> {
+    const parentBlockId = options?.parentBlockId ?? docId;
+    const existingChildren = await this.listChildBlocks(docId, parentBlockId);
+
+    if (existingChildren.length > 0) {
+      await this.deleteChildRange(docId, parentBlockId, 0, existingChildren.length);
+      console.log('[FeishuDocClient] 已清空文档旧内容块:', {
+        docId,
+        removedChildren: existingChildren.length,
+      });
+    }
+
+    const blocks = this.convertMarkdownToBlocks(markdownContent);
+    console.log('[FeishuDocClient] Markdown 转换完成，生成块数:', blocks.length);
+
+    if (blocks.length === 0) {
+      return;
+    }
+
+    await this.addBlocksToDocument(docId, parentBlockId, blocks);
+    console.log('[FeishuDocClient] 内容块添加成功');
+  }
+
+  private async listChildBlocks(docId: string, parentId: string): Promise<ChildBlockItem[]> {
+    const items: ChildBlockItem[] = [];
+    let pageToken: string | undefined;
+
+    do {
+      const url = new URL(`${this.baseUrl}/documents/${docId}/blocks/${parentId}/children`);
+      url.searchParams.set('page_size', '500');
+      url.searchParams.set('document_revision_id', '-1');
+
+      if (pageToken) {
+        url.searchParams.set('page_token', pageToken);
+      }
+
+      const data = await this.requestApi<ChildBlockListData>(
+        {
+          url: url.toString(),
+          method: 'GET',
+        },
+        'List child blocks',
+      );
+
+      items.push(...(data.items || []));
+      pageToken = data.has_more ? data.page_token : undefined;
+    } while (pageToken);
+
+    return items;
+  }
+
+  private async deleteChildRange(
+    docId: string,
+    parentId: string,
+    startIndex: number,
+    endIndex: number,
+  ): Promise<void> {
+    const url = new URL(
+      `${this.baseUrl}/documents/${docId}/blocks/${parentId}/children/batch_delete`,
+    );
+    url.searchParams.set('document_revision_id', '-1');
+
+    await this.requestApi<BlockMutationData>(
+      {
+        url: url.toString(),
+        method: 'DELETE',
+        body: JSON.stringify({
+          start_index: startIndex,
+          end_index: endIndex,
+        } satisfies DeleteBlockChildrenRequest),
+      },
+      'Delete child blocks',
+    );
+  }
+
   private async addBlocksToDocument(
     docId: string,
     parentId: string,
-    blocks: Array<{ block_type: number; [key: string]: unknown }>,
+    blocks: DocBlock[],
   ): Promise<void> {
-    const url = `https://open.feishu.cn/open-apis/docx/v1/documents/${docId}/blocks/${parentId}/children`;
-
-    // 飞书 API 要求的请求体格式
-    const requestBody = {
-      children: blocks,
-      index: 0,
-    };
-
-    console.log('[FeishuDocClient] 添加块请求详情:', {
-      url,
-      requestBody: JSON.stringify(requestBody, null, 2),
-      blocksCount: blocks.length,
-      firstBlock: blocks[0],
-    });
-
-    let response;
-    try {
-      response = await requestUrl({
-        url,
+    await this.requestApi<BlockMutationData>(
+      {
+        url: `${this.baseUrl}/documents/${docId}/blocks/${parentId}/children`,
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.userAccessToken}`,
-        },
-        contentType: 'application/json; charset=utf-8',
-        body: JSON.stringify(requestBody),
-      });
-    } catch (error: any) {
-      console.error('[FeishuDocClient] 添加块 HTTP 错误详情:', {
-        errorMessage: error.message,
-        errorStatus: error.status,
-        errorCode: error.errorCode,
-        errorName: error.name,
-        errorStack: error.stack,
-      });
-      throw error;
-    }
-
-    console.log('[FeishuDocClient] 添加块响应:', {
-      status: response.status,
-      statusText: response.text,
-      json: response.json,
-    });
-
-    const data = response.json as CreateBlockResponse;
-
-    if (response.status !== 200) {
-      console.error('[FeishuDocClient] 添加块失败 - HTTP 错误:', {
-        status: response.status,
-        responseText: response.text,
-        responseJson: data,
-      });
-      throw new Error(`HTTP ${response.status}: ${JSON.stringify(data)}`);
-    }
-
-    if (data.code !== 0) {
-      console.error('[FeishuDocClient] 添加块失败 - API 错误:', {
-        code: data.code,
-        msg: data.msg,
-        fullResponse: data,
-      });
-      throw new Error(`API 错误 ${data.code}: ${data.msg}`);
-    }
+        body: JSON.stringify({
+          children: blocks,
+          index: 0,
+        } satisfies CreateBlockRequest),
+      },
+      'Create document blocks',
+    );
   }
 
-  /**
-   * 将 Markdown 内容转换为飞书文档块
-   * 目前支持基本的 Markdown 语法：
-   * - 标题（# ## ### 等）
-   * - 文本段落
-   * - 无序列表（- 或 *）
-   * - 有序列表（1. 2. 等）
-   * - 代码块（```）
-   * - 引用（>）
-   * - 分割线（---）
-   */
-  private convertMarkdownToBlocks(markdown: string): Array<{ block_type: number; [key: string]: unknown }> {
-    const blocks: Array<{ block_type: number; [key: string]: unknown }> = [];
+  private async requestApi<TData>(
+    init: Omit<RequestUrlParam, 'headers' | 'contentType' | 'throw'>,
+    action: string,
+  ): Promise<TData> {
+    const response = await requestUrl({
+      ...init,
+      throw: false,
+      headers: {
+        Authorization: `Bearer ${this.userAccessToken}`,
+      },
+      contentType: 'application/json; charset=utf-8',
+    });
+
+    const payload = response.json as ApiEnvelope<TData>;
+
+    if (response.status >= 400) {
+      throw this.buildError(action, response, payload);
+    }
+
+    if (payload.code !== 0) {
+      throw this.buildError(action, response, payload);
+    }
+
+    return (payload.data ?? {}) as TData;
+  }
+
+  private buildError(
+    action: string,
+    response: RequestUrlResponse,
+    payload?: ApiEnvelope<unknown>,
+  ): FeishuDocClientError {
+    const apiCode = payload?.code;
+    const apiMessage = payload?.msg || response.text;
+    const isMissing =
+      response.status === 404 || apiCode === 1770002 || apiCode === 1770003;
+    const detail = apiCode ? `code=${apiCode}, msg=${apiMessage || 'unknown error'}` : response.text;
+
+    console.error('[FeishuDocClient] 请求失败:', {
+      action,
+      status: response.status,
+      apiCode,
+      apiMessage,
+      responseText: response.text,
+    });
+
+    return new FeishuDocClientError(
+      `${action} failed: ${detail || `HTTP ${response.status}`}`,
+      response.status,
+      apiCode,
+      apiMessage,
+      isMissing,
+      response.text,
+    );
+  }
+
+  private convertMarkdownToBlocks(markdown: string): DocBlock[] {
+    const blocks: DocBlock[] = [];
     const lines = markdown.split('\n');
-    let i = 0;
+    let index = 0;
 
-    while (i < lines.length) {
-      const line = lines[i];
-      if (!line) {
-        i += 1;
-        continue;
+    while (index < lines.length) {
+      const currentLine = lines[index];
+      if (currentLine === undefined) {
+        break;
       }
 
-      const trimmedLine = line.trim();
-
-      // 空行跳过
+      const trimmedLine = currentLine.trim();
       if (!trimmedLine) {
-        i += 1;
+        index += 1;
         continue;
       }
 
-      // 代码块
       if (trimmedLine.startsWith('```')) {
-        const codeBlock = this.parseCodeBlock(lines, i);
+        const codeBlock = this.parseCodeBlock(lines, index);
         blocks.push(codeBlock.block);
-        i = codeBlock.nextIndex;
+        index = codeBlock.nextIndex;
         continue;
       }
 
-      // 标题
       if (trimmedLine.startsWith('#')) {
         const headingBlock = this.parseHeading(trimmedLine);
         if (headingBlock) {
           blocks.push(headingBlock);
         }
-        i += 1;
+        index += 1;
         continue;
       }
 
-      // 引用
       if (trimmedLine.startsWith('>')) {
-        const quoteText = trimmedLine.substring(1).trim();
-        blocks.push(this.createTextBlock(quoteText));
-        i += 1;
+        blocks.push(this.createQuoteBlock(trimmedLine.substring(1).trim()));
+        index += 1;
         continue;
       }
 
-      // 无序列表
+      const todoMatch = trimmedLine.match(/^- \[( |x|X)\]\s+(.+)$/);
+      if (todoMatch) {
+        blocks.push(this.createTodoBlock(todoMatch[2]!, todoMatch[1]!.toLowerCase() === 'x'));
+        index += 1;
+        continue;
+      }
+
       if (trimmedLine.startsWith('- ') || trimmedLine.startsWith('* ')) {
-        const listText = trimmedLine.substring(2).trim();
-        blocks.push(this.createBulletBlock(listText));
-        i += 1;
+        blocks.push(this.createBulletBlock(trimmedLine.substring(2).trim()));
+        index += 1;
         continue;
       }
 
-      // 有序列表
       const orderedMatch = trimmedLine.match(/^\d+\.\s+(.+)$/);
       if (orderedMatch) {
         blocks.push(this.createOrderedBlock(orderedMatch[1]!));
-        i += 1;
+        index += 1;
         continue;
       }
 
-      // 分割线
       if (trimmedLine === '---' || trimmedLine === '***') {
         blocks.push(this.createDividerBlock());
-        i += 1;
+        index += 1;
         continue;
       }
 
-      // 普通文本
       blocks.push(this.createTextBlock(trimmedLine));
-      i += 1;
+      index += 1;
     }
 
     return blocks;
   }
 
-  /**
-   * 解析代码块
-   */
-  private parseCodeBlock(lines: string[], startIndex: number): { block: { block_type: number; [key: string]: unknown }; nextIndex: number } {
+  private parseCodeBlock(
+    lines: string[],
+    startIndex: number,
+  ): { block: DocBlock; nextIndex: number } {
     const firstLine = lines[startIndex];
-    if (!firstLine) {
-      return {
-        block: { block_type: BlockType.Text, text: { elements: [] } },
-        nextIndex: startIndex + 1,
-      };
-    }
-
-    const language = firstLine.substring(3).trim() || 'plain_text';
+    const language = firstLine?.substring(3).trim() || 'plain_text';
     const codeLines: string[] = [];
 
-    let i = startIndex + 1;
-    while (i < lines.length && !lines[i]!.trim().startsWith('```')) {
-      codeLines.push(lines[i]!);
-      i += 1;
-    }
+    let index = startIndex + 1;
+    while (index < lines.length) {
+      const line = lines[index];
+      if (line !== undefined && line.trim().startsWith('```')) {
+        break;
+      }
 
-    const code = codeLines.join('\n');
+      codeLines.push(line || '');
+      index += 1;
+    }
 
     return {
       block: {
         block_type: BlockType.Code,
         code: {
-          language,
-          style: {},
-          elements: [
-            {
-              type: 'run',
-              code_run: {
-                language,
-                content: code,
-              },
-            },
-          ],
+          elements: [this.createTextRunElement(codeLines.join('\n'))],
+          language: this.toFeishuCodeLanguage(language),
+          wrap: false,
         },
       },
-      nextIndex: i + 1,
+      nextIndex: Math.min(index + 1, lines.length),
     };
   }
 
-  /**
-   * 解析标题
-   */
-  private parseHeading(line: string): { block_type: number; [key: string]: unknown } | null {
+  private parseHeading(line: string): DocBlock | null {
     const match = line.match(/^(#{1,6})\s+(.+)$/);
     if (!match) {
       return null;
@@ -482,73 +531,88 @@ export class FeishuDocClient {
     const level = match[1]!.length;
     const text = match[2]!;
 
-    const blockTypeMap: Record<number, number> = {
-      1: BlockType.Heading1,
-      2: BlockType.Heading2,
-      3: BlockType.Heading3,
-      4: BlockType.Heading4,
-      5: BlockType.Heading5,
-      6: BlockType.Heading6,
+    const blockTypeMap: Record<
+      number,
+      {
+        type: number;
+        key: Extract<
+          BlockContentKey,
+          'heading1' | 'heading2' | 'heading3' | 'heading4' | 'heading5' | 'heading6'
+        >;
+      }
+    > = {
+      1: { type: BlockType.Heading1, key: 'heading1' },
+      2: { type: BlockType.Heading2, key: 'heading2' },
+      3: { type: BlockType.Heading3, key: 'heading3' },
+      4: { type: BlockType.Heading4, key: 'heading4' },
+      5: { type: BlockType.Heading5, key: 'heading5' },
+      6: { type: BlockType.Heading6, key: 'heading6' },
     };
 
-    const headingType = blockTypeMap[level]!;
-    const element = this.createTextRunElement(text);
+    const headingType = blockTypeMap[level];
+    if (!headingType) {
+      return null;
+    }
 
     return {
-      block_type: headingType,
-      [headingType]: { elements: [element] },
+      block_type: headingType.type,
+      [headingType.key]: this.createTextContent(text),
     };
   }
 
-  /**
-   * 创建文本块
-   */
-  private createTextBlock(text: string): { block_type: number; [key: string]: unknown } {
+  private createTextBlock(text: string): DocBlock {
     return {
       block_type: BlockType.Text,
-      text: {
-        elements: [this.createTextRunElement(text)],
-      },
+      text: this.createTextContent(text),
     };
   }
 
-  /**
-   * 创建无序列表块
-   */
-  private createBulletBlock(text: string): { block_type: number; [key: string]: unknown } {
+  private createBulletBlock(text: string): DocBlock {
     return {
       block_type: BlockType.Bullet,
-      bullet: {
-        elements: [this.createTextRunElement(text)],
-      },
+      bullet: this.createTextContent(text),
     };
   }
 
-  /**
-   * 创建有序列表块
-   */
-  private createOrderedBlock(text: string): { block_type: number; [key: string]: unknown } {
+  private createOrderedBlock(text: string): DocBlock {
     return {
       block_type: BlockType.Ordered,
-      ordered: {
-        elements: [this.createTextRunElement(text)],
+      ordered: this.createTextContent(text),
+    };
+  }
+
+  private createQuoteBlock(text: string): DocBlock {
+    return {
+      block_type: BlockType.Quote,
+      quote: this.createTextContent(text),
+    };
+  }
+
+  private createTodoBlock(text: string, done: boolean): DocBlock {
+    return {
+      block_type: BlockType.Todo,
+      todo: {
+        ...this.createTextContent(text),
+        done,
       },
     };
   }
 
-  /**
-   * 创建分割线块
-   */
-  private createDividerBlock(): { block_type: number; [key: string]: unknown } {
+  private createDividerBlock(): DocBlock {
     return {
       block_type: BlockType.Divider,
+      divider: {},
     };
   }
 
-  /**
-   * 创建文本运行元素
-   */
-  private createTextRunElement(text: string): Record<string, unknown> {
+  private createTextContent(text: string): TextBlockContent {
+    return {
+      elements: [this.createTextRunElement(text)],
+      style: {},
+    };
+  }
+
+  private createTextRunElement(text: string): TextElement {
     return {
       type: 'text_run',
       text_run: {
@@ -558,23 +622,51 @@ export class FeishuDocClient {
     };
   }
 
-  /**
-   * 更新飞书在线文档
-   * 注意：此功能暂未实现，保留接口用于未来扩展
-   */
-  async updateDocument(
-    docId: string,
-    markdownContent: string,
-    options?: UpdateDocumentOptions,
-  ): Promise<void> {
-    // TODO: 实现文档更新逻辑
-    throw new Error('文档更新功能暂未实现，请使用创建文档功能');
+  private toFeishuCodeLanguage(language: string): number {
+    const normalized = language.trim().toLowerCase();
+    const map: Record<string, number> = {
+      bash: 7,
+      sh: 60,
+      shell: 60,
+      c: 10,
+      cpp: 9,
+      'c++': 9,
+      css: 12,
+      go: 22,
+      graphql: 71,
+      html: 24,
+      java: 29,
+      javascript: 30,
+      js: 30,
+      json: 28,
+      markdown: 39,
+      md: 39,
+      nginx: 40,
+      objectivec: 41,
+      php: 43,
+      plaintext: 1,
+      plain_text: 1,
+      powershell: 46,
+      proto: 48,
+      protobuf: 48,
+      python: 49,
+      py: 49,
+      rust: 53,
+      scss: 55,
+      sql: 56,
+      swift: 61,
+      toml: 75,
+      ts: 63,
+      typescript: 63,
+      xml: 66,
+      yaml: 67,
+      yml: 67,
+    };
+
+    return map[normalized] ?? 1;
   }
 
-  /**
-   * 清除可用性缓存（API 模式不需要）
-   */
-  invalidateAvailabilityCache(): void {
-    // API 模式总是可用，无需清除缓存
+  private buildDocumentUrl(docId: string): string {
+    return `https://www.feishu.cn/docx/${docId}`;
   }
 }

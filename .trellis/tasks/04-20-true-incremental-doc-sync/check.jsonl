@@ -1,0 +1,7 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check.md", "reason": "Code quality check spec"}
+{"file": ".trellis/spec/backend/feishu-drive-sync.md", "reason": "Verify doc update semantics and duplicate-prevention behavior"}
+{"file": ".trellis/spec/backend/quality-and-safety.md", "reason": "Verify failure handling and persisted state safety"}
+{"file": ".trellis/spec/backend/filesystem-and-state.md", "reason": "Verify syncState schema and incremental behavior"}
+{"file": ".trellis/spec/frontend/settings-and-secrets.md", "reason": "Verify plugin data contract remains safe and structured"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify cross-layer contract from relPath to remote doc identity"}

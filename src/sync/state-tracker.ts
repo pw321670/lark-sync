@@ -1,4 +1,4 @@
-import type { FileState, SyncStateMap } from './types';
+import type { RemoteFileRef, FileState, SyncStateMap } from './types';
 
 export interface StateStore {
   load(): Promise<SyncStateMap>;
@@ -48,7 +48,9 @@ export class StateTracker {
     return this.state[relPath];
   }
 
-  updateFileStates(entries: Array<{ relPath: string; size: number; mtimeMs: number }>): void {
+  updateFileStates(
+    entries: Array<{ relPath: string; size: number; mtimeMs: number; remote?: RemoteFileRef }>,
+  ): void {
     const uploadedAt = new Date().toISOString();
 
     for (const entry of entries) {
@@ -56,6 +58,7 @@ export class StateTracker {
         size: entry.size,
         mtimeMs: entry.mtimeMs,
         uploadedAt,
+        remote: entry.remote,
       };
     }
 

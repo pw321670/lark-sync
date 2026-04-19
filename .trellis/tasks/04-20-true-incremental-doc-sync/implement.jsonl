@@ -1,0 +1,9 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/backend/feishu-drive-sync.md", "reason": "DocX create/update contract and remote identity behavior"}
+{"file": ".trellis/spec/backend/filesystem-and-state.md", "reason": "syncState schema and relPath-based incremental semantics"}
+{"file": ".trellis/spec/backend/quality-and-safety.md", "reason": "fail-fast and partial-success handling for remote updates"}
+{"file": ".trellis/spec/frontend/settings-and-secrets.md", "reason": "plugin data persistence boundary for syncState extension"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "state, remote identity, and UI summary cross-layer contract"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "avoid duplicating document sync/update flows"}

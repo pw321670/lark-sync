@@ -7,6 +7,7 @@ import {
   SyncCancelledError,
   buildSyncConfig,
   toUiSyncSummary,
+  type StateStore,
   type SyncResult,
 } from './sync';
 import { NotificationManager, SyncButton, registerSyncCommands } from './ui';
@@ -131,6 +132,17 @@ export default class SyncObsidianFeishuPlugin extends Plugin {
   }
 
   private initSyncCoordinator(): void {
+    const stateStore: StateStore = {
+      load: async () => ({ ...this.pluginData.syncState }),
+      save: async (state) => {
+        this.pluginData = {
+          ...this.pluginData,
+          syncState: { ...state },
+        };
+        await this.persistPluginData();
+      },
+    };
+
     this.syncCoordinator = new SyncCoordinator({
       getFiles: () =>
         this.app.vault.getFiles().map((file) => ({
@@ -142,6 +154,8 @@ export default class SyncObsidianFeishuPlugin extends Plugin {
           },
         })),
       readBinary: (path) => this.app.vault.adapter.readBinary(path.replace(/\\/g, '/')),
+    }, {
+      stateStore,
     });
 
     this.syncCoordinator.initialize().catch((error) => {

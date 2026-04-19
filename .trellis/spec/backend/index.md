@@ -13,7 +13,9 @@ This backend layer documents the current plugin runtime that scans an Obsidian v
   - The live sync runtime is the Obsidian desktop plugin, not a standalone Node script.
   - Vault access comes from Obsidian APIs injected into the sync layer.
   - Config and auth live in plugin data.
-  - Incremental file state is currently handled by `StateTracker`; without an injected persistent store it only lasts for the current plugin runtime.
+  - Incremental file state is handled by `StateTracker` and currently persists through plugin data across reloads.
+  - In document mode, sync state now persists the last known remote `docId` per normalized `relPath`.
+  - Markdown document updates reuse the stored remote document when possible and only fall back to same-folder title recovery or fresh creation when the stored remote document is gone.
 
 ## Guides
 

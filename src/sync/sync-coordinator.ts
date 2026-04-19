@@ -1,7 +1,7 @@
 import type { FileEntry, SyncConfig, SyncResult } from './types';
 import { FeishuClient } from './feishu-client';
 import { FeishuDocClient } from './feishu-doc-client';
-import { StateTracker } from './state-tracker';
+import { StateTracker, type StateStore } from './state-tracker';
 import { UploadManager } from './upload-manager';
 
 export interface SyncVault {
@@ -11,6 +11,7 @@ export interface SyncVault {
 
 export interface CoordinatorOptions {
   verbose?: boolean;
+  stateStore?: StateStore;
 }
 
 interface ActiveSync {
@@ -26,13 +27,17 @@ export class SyncCancelledError extends Error {
 }
 
 export class SyncCoordinator {
-  private readonly stateTracker = new StateTracker();
+  private readonly stateTracker: StateTracker;
   private activeSync: ActiveSync | null = null;
 
   constructor(
     private readonly vault: SyncVault,
     private readonly options: CoordinatorOptions = {},
-  ) {}
+  ) {
+    this.stateTracker = new StateTracker({
+      store: options.stateStore,
+    });
+  }
 
   async initialize(): Promise<void> {
     await this.stateTracker.load();
@@ -102,7 +107,14 @@ export class SyncCoordinator {
     const folderMap = await this.createFolderStructure(changedFiles, client, config, run);
     this.throwIfCancelled(run);
 
-    const uploadResult = await uploadManager.uploadFiles(changedFiles, folderMap, {
+    const previousStates = Object.fromEntries(
+      changedFiles.flatMap((file) => {
+        const state = this.stateTracker.getFileState(file.relPath);
+        return state ? [[file.relPath, state]] : [];
+      }),
+    );
+
+    const uploadResult = await uploadManager.uploadFiles(changedFiles, folderMap, previousStates, {
       concurrency: config.concurrentUploads,
       retryAttempts: config.retryAttempts,
       retryDelay: config.retryDelay,
@@ -110,16 +122,8 @@ export class SyncCoordinator {
     });
     this.throwIfCancelled(run);
 
-    const uploadedStates = changedFiles
-      .filter((file) => !uploadResult.failedFiles.some((failed) => failed.path === file.relPath))
-      .map((file) => ({
-        relPath: file.relPath,
-        size: file.size,
-        mtimeMs: file.mtimeMs,
-      }));
-
-    if (uploadedStates.length > 0) {
-      this.stateTracker.updateFileStates(uploadedStates);
+    if (uploadResult.uploadedStates.length > 0) {
+      this.stateTracker.updateFileStates(uploadResult.uploadedStates);
     }
 
     await this.stateTracker.save();

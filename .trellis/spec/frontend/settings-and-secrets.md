@@ -81,6 +81,10 @@ Current semantic fields:
 
 - key: normalized relative path
 - values: `size`, `mtimeMs`, `uploadedAt`
+- optional `remote` object for document mode:
+  - `type = "document"`
+  - `token = remote document_id`
+  - `title`, `parentFolderToken`, `url` for recovery/debugging context
 
 ---
 

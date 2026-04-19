@@ -97,8 +97,26 @@ export class FeishuClient {
   }
 
   async findExistingFiles(folderToken: string, fileName: string): Promise<FeishuFileItem[]> {
+    return this.findExistingItems(folderToken, fileName, ['file']);
+  }
+
+  async findExistingItems(
+    folderToken: string,
+    itemName: string,
+    allowedTypes?: string[],
+  ): Promise<FeishuFileItem[]> {
     const items = await this.listFolderItems(folderToken);
-    return items.filter((item) => item.name === fileName && item.type === 'file');
+    return items.filter((item) => {
+      if (item.name !== itemName || item.type === 'folder') {
+        return false;
+      }
+
+      if (!allowedTypes || allowedTypes.length === 0) {
+        return true;
+      }
+
+      return allowedTypes.includes(item.type);
+    });
   }
 
   async deleteFile(fileToken: string, fileType = 'file'): Promise<void> {

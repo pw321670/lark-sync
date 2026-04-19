@@ -8,6 +8,7 @@ export type { UploadOptions, UploadResult, FileReader } from './upload-manager';
 
 export { SyncCoordinator, SyncCancelledError } from './sync-coordinator';
 export type { CoordinatorOptions, SyncVault } from './sync-coordinator';
+export type { StateStore } from './state-tracker';
 
 export { buildSyncConfig, toUiSyncSummary } from './obsidian-adapter';
 export type { SyncConfigBuilderOptions } from './obsidian-adapter';

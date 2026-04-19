@@ -53,11 +53,13 @@ This project is an Obsidian plugin with TypeScript build infrastructure. The qua
 - Add an excluded path and confirm it never reaches the remote target.
 - Add a file above `maxDirectUploadMB` and confirm the run continues while that file is skipped.
 - If `markdownSyncMode=document` is enabled, confirm Markdown files take the doc path and failures surface clearly.
+- If `markdownSyncMode=document` is enabled, confirm a second edit to the same Markdown file keeps the same remote doc URL instead of creating a duplicate doc.
 
 ## Known Gaps To Revisit Deliberately
 
 - no automated tests and no dedicated lint command
 - no pagination handling for folder listing beyond current client behavior
 - no reconciliation for local deletions
-- no persistent incremental checkpoint store across plugin reloads yet
+- document updates are still coarse-grained block replacement inside one `docId`, not fine-grained block patching
+- same-folder title recovery can be ambiguous if old duplicate docs already exist and sync state is missing
 - some debug-heavy logging still exists in sync client/upload paths and should keep shrinking

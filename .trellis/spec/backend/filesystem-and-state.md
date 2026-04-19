@@ -51,14 +51,21 @@ Current behavior is file-oriented. The runtime no longer keeps a separate standa
 
 ## State Schema
 
-Current in-memory shape:
+Current persisted state shape:
 
 ```json
 {
   "Folder/Note.md": {
     "size": 1234,
     "mtimeMs": 1711111111111,
-    "uploadedAt": "2026-04-19T03:00:00.000Z"
+    "uploadedAt": "2026-04-20T03:00:00.000Z",
+    "remote": {
+      "type": "document",
+      "token": "doxcnxxxxxxxxxxxxxxxxxxxxxx",
+      "title": "Note",
+      "parentFolderToken": "fldxxxxxxxxxxxxxxxxxxxxxx",
+      "url": "https://www.feishu.cn/docx/doxcnxxxxxxxxxxxxxxxxxxxxxx"
+    }
   }
 }
 ```
@@ -69,6 +76,11 @@ Rules:
 - `size` comes from Obsidian file stats
 - `mtimeMs` comes from Obsidian file stats
 - `uploadedAt` is written with `new Date().toISOString()` after a successful upload
+- `remote` is optional and is currently written only for Markdown files synced in document mode
+- `remote.type` is the persisted remote-object family for that path; today only `"document"` is used
+- `remote.token` is the Feishu `document_id` that should be reused for in-place doc updates on later runs
+- `remote.parentFolderToken` records the remote parent folder used when the state entry was written
+- `remote.title` and `remote.url` are convenience fields for recovery/debugging, not state keys
 
 ## Change Detection
 
@@ -82,8 +94,12 @@ If those checks pass, the file is skipped without any remote API calls.
 
 ## Current State Limitations
 
-- The default `StateTracker` store is in-memory only.
-- State is saved after successful uploads, but without a persistent injected store it does not survive plugin reload.
+- The current `StateTracker` store is backed by plugin data through `src/main.ts`.
+- State is saved after successful uploads and survives plugin reload.
+- Regular-file uploads still do not persist a remote file token; they remain delete-and-reupload operations.
+- Markdown document mode now persists remote document identity and can update a known remote document in place across runs.
+- If the stored remote document is missing, the runtime falls back to same-remote-folder and same-title recovery before creating a fresh document.
+- If multiple same-title remote documents already exist in one folder and state is missing, recovery currently reuses the first matching document to stop the system from creating even more duplicates.
 - Deleted local files are not pruned from Feishu Drive or from stored sync state.
 - Files larger than `maxDirectUploadMB` are skipped and do not receive a fresh state entry for that run.
 - Folder tokens are not persisted across runs; they are rebuilt in memory every sync.
@@ -103,7 +119,8 @@ These limitations are part of the current runtime behavior and must be changed d
 - Add an excluded path such as `.trash` and verify it never reaches upload.
 - Re-run sync without changing a file and verify it is skipped based on `size` and `mtimeMs`.
 - Modify a file and verify its state entry receives a new `uploadedAt`.
-- Reload the plugin and verify current state limitations are understood: unchanged-skip behavior will reset unless persistent state storage is added.
+- In document mode, modify a Markdown file and verify its persisted `remote.token` stays stable while content updates in place remotely.
+- Reload the plugin and verify unchanged files are still skipped because persisted state is reloaded correctly.
 
 ## Scenario: Obsidian Vault Reads Must Stay Vault-Relative
 

@@ -1,10 +1,15 @@
-import type { FileEntry, SyncConfig } from './types';
-import { FeishuDocClient } from './feishu-doc-client';
+import { FeishuDocClient, FeishuDocClientError } from './feishu-doc-client';
+import type { FileEntry, FileState, RemoteFileRef, SyncConfig, SyncStateMap } from './types';
 
 interface FeishuClientLike {
   findExistingFiles(
     folderToken: string,
     fileName: string,
+  ): Promise<Array<{ type?: string; token?: string; name: string }>>;
+  findExistingItems(
+    folderToken: string,
+    itemName: string,
+    allowedTypes?: string[],
   ): Promise<Array<{ type?: string; token?: string; name: string }>>;
   deleteFile(fileToken: string, fileType?: string): Promise<void>;
   uploadSmallFile(
@@ -31,11 +36,18 @@ export interface UploadResult {
   failedCount: number;
   failedFiles: Array<{ path: string; error: string }>;
   totalBytesUploaded: number;
+  uploadedStates: Array<{
+    relPath: string;
+    size: number;
+    mtimeMs: number;
+    remote?: RemoteFileRef;
+  }>;
 }
 
 interface UploadTask {
   file: FileEntry;
   parentFolderToken: string;
+  previousState?: FileState;
 }
 
 interface UploadTaskResult {
@@ -43,6 +55,12 @@ interface UploadTaskResult {
   success: boolean;
   error?: string;
   bytesUploaded: number;
+  remote?: RemoteFileRef;
+}
+
+interface UploadOperationResult {
+  bytesUploaded: number;
+  remote?: RemoteFileRef;
 }
 
 export class UploadManager {
@@ -56,6 +74,7 @@ export class UploadManager {
   async uploadFiles(
     files: FileEntry[],
     folderMap: Record<string, string>,
+    previousStates: SyncStateMap = {},
     options: UploadOptions = {},
   ): Promise<UploadResult> {
     const concurrency = options.concurrency || this.config.concurrentUploads || 3;
@@ -67,6 +86,7 @@ export class UploadManager {
       failedCount: 0,
       failedFiles: [],
       totalBytesUploaded: 0,
+      uploadedStates: [],
     };
 
     const tasks: UploadTask[] = [];
@@ -83,7 +103,11 @@ export class UploadManager {
         continue;
       }
 
-      tasks.push({ file, parentFolderToken: parentToken });
+      tasks.push({
+        file,
+        parentFolderToken: parentToken,
+        previousState: previousStates[file.relPath],
+      });
     }
 
     const completedResults = await this.executeWithConcurrency(
@@ -97,6 +121,12 @@ export class UploadManager {
       if (item.success) {
         result.uploadedCount += 1;
         result.totalBytesUploaded += item.bytesUploaded;
+        result.uploadedStates.push({
+          relPath: item.file.relPath,
+          size: item.file.size,
+          mtimeMs: item.file.mtimeMs,
+          remote: item.remote,
+        });
         continue;
       }
 
@@ -116,7 +146,7 @@ export class UploadManager {
     retryDelay: number,
     isCancelled?: () => boolean,
   ): Promise<UploadTaskResult> {
-    const { file, parentFolderToken } = task;
+    const { file, parentFolderToken, previousState } = task;
     let lastError: string | undefined;
 
     for (let attempt = 1; attempt <= retryAttempts; attempt += 1) {
@@ -130,11 +160,12 @@ export class UploadManager {
       }
 
       try {
-        const bytesUploaded = await this.uploadFile(file, parentFolderToken);
+        const upload = await this.uploadFile(file, parentFolderToken, previousState);
         return {
           file,
           success: true,
-          bytesUploaded,
+          bytesUploaded: upload.bytesUploaded,
+          remote: upload.remote,
         };
       } catch (error) {
         lastError = (error as Error).message;
@@ -155,45 +186,217 @@ export class UploadManager {
     };
   }
 
-  private async uploadFile(file: FileEntry, parentFolderToken: string): Promise<number> {
+  private async uploadFile(
+    file: FileEntry,
+    parentFolderToken: string,
+    previousState?: FileState,
+  ): Promise<UploadOperationResult> {
     const fileName = this.getFileName(file.relPath);
 
-    // 🔍 调试信息：上传前记录文件信息（方便后续删除）
     console.log('[UploadManager] 准备上传文件:', {
       relPath: file.relPath,
       fileName,
       size: file.size,
       parentFolderToken,
-      mtimeMs: file.mtimeMs
+      mtimeMs: file.mtimeMs,
     });
 
     try {
-      // 如果是 Markdown 文件且配置了文档客户端，则创建为在线文档
-      if (this.isMarkdownFile(fileName) && this.feishuDocClient && this.config.markdownSyncMode !== 'file') {
-        return this.uploadAsDocument(file, parentFolderToken, fileName);
+      if (
+        this.isMarkdownFile(fileName) &&
+        this.feishuDocClient &&
+        this.config.markdownSyncMode !== 'file'
+      ) {
+        return await this.uploadAsDocument(file, parentFolderToken, fileName, previousState);
       }
 
-      // 其他情况使用原有的文件上传逻辑
-      return this.uploadAsRegularFile(file, parentFolderToken, fileName);
+      return await this.uploadAsRegularFile(file, parentFolderToken, fileName);
     } catch (error) {
       console.error('[UploadManager] 文件上传失败:', {
         fileName,
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined
+        stack: error instanceof Error ? error.stack : undefined,
       });
       throw error;
     }
   }
 
-  private async deleteExistingFiles(parentFolderToken: string, fileName: string): Promise<void> {
-    const existingFiles = await this.feishuClient.findExistingFiles(parentFolderToken, fileName);
+  private async uploadAsDocument(
+    file: FileEntry,
+    parentFolderToken: string,
+    fileName: string,
+    previousState?: FileState,
+  ): Promise<UploadOperationResult> {
+    console.log('[UploadManager] 检测到 Markdown 文件，准备同步为在线文档:', fileName);
 
-    for (const existingFile of existingFiles) {
-      if (!existingFile.token) {
+    const fileContent = await this.fileReader.readFileContent(file.relPath);
+    const markdownText = new TextDecoder().decode(fileContent);
+    const docTitle = fileName.replace(/\.md$/i, '') || '未命名文档';
+
+    console.log('[UploadManager] Markdown 内容读取成功:', {
+      fileName,
+      contentLength: markdownText.length,
+      originalSize: file.size,
+    });
+
+    const previousToken = this.getStoredDocumentToken(previousState);
+    let remoteRef: RemoteFileRef | undefined;
+
+    if (previousToken) {
+      try {
+        await this.feishuDocClient!.updateDocument(previousToken, markdownText);
+        remoteRef = this.buildDocumentRef(previousToken, docTitle, parentFolderToken);
+        console.log('[UploadManager] 使用已记录 docId 原位更新成功:', {
+          relPath: file.relPath,
+          docId: previousToken,
+        });
+      } catch (error) {
+        if (!this.isMissingDocumentError(error)) {
+          throw error;
+        }
+
+        console.warn('[UploadManager] 已记录 docId 指向的文档不存在，准备恢复或重建:', {
+          relPath: file.relPath,
+          docId: previousToken,
+        });
+      }
+    }
+
+    if (!remoteRef) {
+      const recoveredToken = await this.recoverExistingDocumentToken(parentFolderToken, docTitle);
+      if (recoveredToken) {
+        await this.feishuDocClient!.updateDocument(recoveredToken, markdownText);
+        remoteRef = this.buildDocumentRef(recoveredToken, docTitle, parentFolderToken);
+        console.log('[UploadManager] 通过同目录同标题恢复到已有文档:', {
+          relPath: file.relPath,
+          docId: recoveredToken,
+        });
+      }
+    }
+
+    if (!remoteRef) {
+      const created = await this.feishuDocClient!.createDocument(docTitle, markdownText, {
+        parentFolderToken,
+      });
+      remoteRef = this.buildDocumentRef(created.docId, docTitle, parentFolderToken, created.docUrl);
+      console.log('[UploadManager] 在线文档创建成功:', {
+        fileName,
+        docId: created.docId,
+        docUrl: created.docUrl,
+      });
+    }
+
+    return {
+      bytesUploaded: file.size,
+      remote: remoteRef,
+    };
+  }
+
+  private async uploadAsRegularFile(
+    file: FileEntry,
+    parentFolderToken: string,
+    fileName: string,
+  ): Promise<UploadOperationResult> {
+    const fileContent = await this.fileReader.readFileContent(file.relPath);
+
+    console.log('[UploadManager] 文件内容读取成功:', {
+      fileName,
+      contentSize: fileContent.byteLength,
+      expectedSize: file.size,
+      sizeMatch: fileContent.byteLength === file.size,
+    });
+
+    await this.deleteExistingFiles(parentFolderToken, fileName);
+    await this.feishuClient.uploadSmallFile(parentFolderToken, fileName, fileContent, file.size);
+
+    console.log('[UploadManager] 文件上传成功:', fileName);
+    return {
+      bytesUploaded: file.size,
+    };
+  }
+
+  private async recoverExistingDocumentToken(
+    parentFolderToken: string,
+    docTitle: string,
+  ): Promise<string | undefined> {
+    const existingItems = await this.feishuClient.findExistingItems(parentFolderToken, docTitle);
+    const documentTokens: string[] = [];
+
+    for (const existingItem of existingItems) {
+      if (!existingItem.token) {
         continue;
       }
 
-      await this.feishuClient.deleteFile(existingFile.token, existingFile.type || 'file');
+      if (await this.feishuDocClient!.documentExists(existingItem.token)) {
+        documentTokens.push(existingItem.token);
+      }
+    }
+
+    if (documentTokens.length === 0) {
+      return undefined;
+    }
+
+    if (documentTokens.length > 1) {
+      console.warn(
+        `[UploadManager] Found ${documentTokens.length} existing documents named "${docTitle}" in the same remote folder; reusing the first match to avoid creating more duplicates.`,
+      );
+    }
+
+    return documentTokens[0];
+  }
+
+  private getStoredDocumentToken(previousState?: FileState): string | undefined {
+    if (previousState?.remote?.type !== 'document') {
+      return undefined;
+    }
+
+    return previousState.remote.token;
+  }
+
+  private buildDocumentRef(
+    token: string,
+    title: string,
+    parentFolderToken: string,
+    url = this.buildDocumentUrl(token),
+  ): RemoteFileRef {
+    return {
+      type: 'document',
+      token,
+      title,
+      parentFolderToken,
+      url,
+    };
+  }
+
+  private buildDocumentUrl(docId: string): string {
+    return `https://www.feishu.cn/docx/${docId}`;
+  }
+
+  private isMissingDocumentError(error: unknown): boolean {
+    return error instanceof FeishuDocClientError && error.isMissing;
+  }
+
+  private async deleteExistingFiles(parentFolderToken: string, fileName: string): Promise<void> {
+    await this.deleteExistingItems(parentFolderToken, fileName, ['file']);
+  }
+
+  private async deleteExistingItems(
+    parentFolderToken: string,
+    itemName: string,
+    allowedTypes?: string[],
+  ): Promise<void> {
+    const existingItems = await this.feishuClient.findExistingItems(
+      parentFolderToken,
+      itemName,
+      allowedTypes,
+    );
+
+    for (const existingItem of existingItems) {
+      if (!existingItem.token) {
+        continue;
+      }
+
+      await this.feishuClient.deleteFile(existingItem.token, existingItem.type || 'file');
     }
   }
 
@@ -267,6 +470,10 @@ export class UploadManager {
     return parts[parts.length - 1] || '';
   }
 
+  private isMarkdownFile(fileName: string): boolean {
+    return fileName.toLowerCase().endsWith('.md');
+  }
+
   private log(level: 'warn' | 'error', message: string): void {
     if (level === 'error') {
       console.error(`[UploadManager:${level}] ${message}`);
@@ -282,84 +489,5 @@ export class UploadManager {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  /**
-   * 判断文件是否为 Markdown 格式
-   */
-  private isMarkdownFile(fileName: string): boolean {
-    return fileName.toLowerCase().endsWith('.md');
-  }
-
-  /**
-   * 将 Markdown 文件上传为飞书在线文档
-   */
-  private async uploadAsDocument(
-    file: FileEntry,
-    parentFolderToken: string,
-    fileName: string,
-  ): Promise<number> {
-    console.log('[UploadManager] 检测到 Markdown 文件，准备创建在线文档:', fileName);
-
-    try {
-      const fileContent = await this.fileReader.readFileContent(file.relPath);
-      const markdownText = new TextDecoder().decode(fileContent);
-
-      console.log('[UploadManager] Markdown 内容读取成功:', {
-        fileName,
-        contentLength: markdownText.length,
-        originalSize: file.size
-      });
-
-      // 从文件名提取文档标题（去除 .md 扩展名）
-      const docTitle = fileName.replace(/\.md$/i, '') || '未命名文档';
-
-      // 调用飞书 API 创建文档
-      const result = await this.feishuDocClient!.createDocument(
-        docTitle,
-        markdownText,
-        {
-          parentFolderToken,
-        }
-      );
-
-      console.log('[UploadManager] 在线文档创建成功:', {
-        fileName,
-        docId: result.docId,
-        docUrl: result.docUrl
-      });
-
-      return file.size;
-    } catch (error) {
-      console.error('[UploadManager] 在线文档创建失败:', {
-        fileName,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      throw error;
-    }
-  }
-
-  /**
-   * 将文件作为普通文件上传
-   */
-  private async uploadAsRegularFile(
-    file: FileEntry,
-    parentFolderToken: string,
-    fileName: string,
-  ): Promise<number> {
-    const fileContent = await this.fileReader.readFileContent(file.relPath);
-
-    console.log('[UploadManager] 文件内容读取成功:', {
-      fileName,
-      contentSize: fileContent.byteLength,
-      expectedSize: file.size,
-      sizeMatch: fileContent.byteLength === file.size
-    });
-
-    await this.deleteExistingFiles(parentFolderToken, fileName);
-    await this.feishuClient.uploadSmallFile(parentFolderToken, fileName, fileContent, file.size);
-
-    console.log('[UploadManager] 文件上传成功:', fileName);
-    return file.size;
   }
 }

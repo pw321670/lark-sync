@@ -1,4 +1,5 @@
 import { normalizeExcludeEntries } from './path-utils';
+import type { RemoteFileRef, SyncStateMap } from '../sync/types';
 
 export type SyncMode = 'manual' | 'auto' | 'scheduled';
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
@@ -49,6 +50,7 @@ export interface PluginData {
   config: FeishuSyncConfig;
   auth: FeishuAuthState;
   lastSync: SyncSummary | null;
+  syncState: SyncStateMap;
 }
 
 export interface ConfigValidationResult {
@@ -85,6 +87,7 @@ export const DEFAULT_PLUGIN_DATA: PluginData = {
     grantedScopes: [],
   },
   lastSync: null,
+  syncState: {},
 };
 
 function getString(value: unknown, fallback = ''): string {
@@ -93,6 +96,34 @@ function getString(value: unknown, fallback = ''): string {
 
 function getPositiveNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function getRemoteFileRef(value: unknown): RemoteFileRef | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const input = value as Partial<RemoteFileRef>;
+  if (input.type !== 'document') {
+    return undefined;
+  }
+
+  const token = getString(input.token);
+  if (!token) {
+    return undefined;
+  }
+
+  const title = getString(input.title);
+  const parentFolderToken = getString(input.parentFolderToken);
+  const url = getString(input.url);
+
+  return {
+    type: 'document',
+    token,
+    ...(title ? { title } : {}),
+    ...(parentFolderToken ? { parentFolderToken } : {}),
+    ...(url ? { url } : {}),
+  };
 }
 
 export function mergePluginData(raw: unknown): PluginData {
@@ -111,6 +142,10 @@ export function mergePluginData(raw: unknown): PluginData {
       ? (input.auth as Partial<FeishuAuthState>)
       : {};
   const inputLastSync = input.lastSync && typeof input.lastSync === 'object' ? input.lastSync : null;
+  const inputSyncState =
+    input.syncState && typeof input.syncState === 'object'
+      ? (input.syncState as SyncStateMap)
+      : base.syncState;
 
   return {
     config: {
@@ -189,6 +224,25 @@ export function mergePluginData(raw: unknown): PluginData {
             inputLastSync.failedPath === null ? null : getString(inputLastSync.failedPath),
         }
       : null,
+    syncState: Object.fromEntries(
+      Object.entries(inputSyncState).flatMap(([relPath, entry]) => {
+        if (!entry || typeof entry !== 'object') {
+          return [];
+        }
+
+        return [
+          [
+            relPath,
+            {
+              size: getPositiveNumber((entry as { size?: unknown }).size, 0),
+              mtimeMs: getPositiveNumber((entry as { mtimeMs?: unknown }).mtimeMs, 0),
+              uploadedAt: getString((entry as { uploadedAt?: unknown }).uploadedAt),
+              remote: getRemoteFileRef((entry as { remote?: unknown }).remote),
+            },
+          ],
+        ];
+      }),
+    ),
   };
 }
 

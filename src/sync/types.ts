@@ -17,10 +17,19 @@ export interface FileEntry {
   mtimeMs: number;
 }
 
+export interface RemoteFileRef {
+  type: 'document';
+  token: string;
+  title?: string;
+  parentFolderToken?: string;
+  url?: string;
+}
+
 export interface FileState {
   size: number;
   mtimeMs: number;
   uploadedAt: string;
+  remote?: RemoteFileRef;
 }
 
 export type SyncStateMap = Record<string, FileState>;
