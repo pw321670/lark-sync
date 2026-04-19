@@ -122,6 +122,85 @@ These limitations are part of the current runtime behavior and must be changed d
 - In document mode, modify a Markdown file and verify its persisted `remote.token` stays stable while content updates in place remotely.
 - Reload the plugin and verify unchanged files are still skipped because persisted state is reloaded correctly.
 
+## Scenario: Persisted Remote Identity For Markdown Documents
+
+### 1. Scope / Trigger
+
+- Trigger: document mode originally only remembered `size` and `mtimeMs`, so plugin reloads or missing in-memory state caused title-based recreation and duplicate docs.
+
+### 2. Signatures
+
+- [`src/sync/types.ts`](../../../src/sync/types.ts)
+  - `interface RemoteFileRef`
+  - `interface FileState`
+- [`src/sync/state-tracker.ts`](../../../src/sync/state-tracker.ts)
+  - `updateFileStates(entries)`
+- [`src/utils/contracts.ts`](../../../src/utils/contracts.ts)
+  - `mergePluginData(raw)`
+
+### 3. Contracts
+
+- `FileState.remote` is optional.
+- `FileState.remote` is currently written only for Markdown files synced in `markdownSyncMode = "document"`.
+- `FileState.remote.type` must currently be `"document"` when present.
+- `FileState.remote.token` is the authoritative remote `document_id` for future updates of the same normalized `relPath`.
+- `FileState.remote.parentFolderToken` is recovery context only; it is not a replacement for the state key.
+- Sync state must still be keyed by normalized local `relPath`, never by remote token.
+- A failed upload must not overwrite or partially refresh `FileState.remote`.
+- A successful document update may reuse the old remote token but must still refresh `uploadedAt`.
+
+### 4. Validation & Error Matrix
+
+| Case | Expected behavior |
+|------|-------------------|
+| Old state entry has no `remote` | allow sync and fall back to recovery/create logic |
+| `remote.type !== "document"` | ignore persisted remote identity for document updates |
+| `remote.token` missing or empty | treat as no remote identity |
+| Document upload fails after remote lookup | do not write a fresh state entry |
+| Document upload succeeds against an existing doc | keep same `remote.token`, refresh `uploadedAt` |
+| Document upload succeeds after recovery/create | write new `remote.token` and refresh `uploadedAt` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: `state["Folder/Note.md"]` stores local file stats plus the remote `document_id` of that exact note.
+- Base: non-document sync still works when `remote` is absent.
+- Bad: use title alone as the durable identity of a Markdown document or use remote token as the top-level state key.
+
+### 6. Tests Required
+
+- Sync one Markdown file in document mode, reload the plugin, modify the same file, sync again, and assert the remote doc URL stays stable.
+- Delete the persisted `remote` field from plugin data, sync again, and assert recovery or create still succeeds.
+- Force a document upload failure and assert the previous state entry is not replaced with partial remote metadata.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```json
+{
+  "doxcn123": {
+    "size": 1234,
+    "mtimeMs": 1711111111111
+  }
+}
+```
+
+#### Correct
+
+```json
+{
+  "Folder/Note.md": {
+    "size": 1234,
+    "mtimeMs": 1711111111111,
+    "uploadedAt": "2026-04-20T03:00:00.000Z",
+    "remote": {
+      "type": "document",
+      "token": "doxcn123"
+    }
+  }
+}
+```
+
 ## Scenario: Obsidian Vault Reads Must Stay Vault-Relative
 
 ### 1. Scope / Trigger

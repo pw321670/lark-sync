@@ -67,6 +67,49 @@ When refactoring backend code:
   - persist current sync summary and runtime state.
 - Search imports and confirm removed abstractions no longer remain in the live path.
 
+## Boundary Decision: Remote Identity Recovery Stays In Upload Layer
+
+**Context**: true incremental doc sync needed both persisted remote identity and a recovery fallback when the stored remote doc disappears.
+
+**Decision**:
+
+- `SyncCoordinator` owns local scan/filter/change-detection and final state persistence.
+- `UploadManager` owns document-vs-file branching and recovery order:
+  - persisted `docId`
+  - same-folder title recovery
+  - fresh create
+- `FeishuDocClient` owns DocX endpoint orchestration and typed DocX error shaping.
+
+**Why**:
+
+- Recovery depends on both local state and remote API behavior; it is too remote-aware for the coordinator, but too policy-heavy for the raw DocX client.
+- Keeping this in `UploadManager` prevents title-recovery rules from leaking into UI code, settings actions, or the coordinator.
+
+**Example**:
+
+```ts
+const uploadResult = await uploadManager.uploadFiles(
+  changedFiles,
+  folderMap,
+  previousStates,
+  options,
+);
+```
+
+`UploadManager` may call either:
+
+```ts
+await feishuDocClient.updateDocument(previousToken, markdownText);
+```
+
+or:
+
+```ts
+const recoveredToken = await recoverExistingDocumentToken(parentFolderToken, docTitle);
+```
+
+but `SyncCoordinator` should not reimplement that branching itself.
+
 ## Scenario: Active Module Set After Cleanup
 
 ### 1. Scope / Trigger

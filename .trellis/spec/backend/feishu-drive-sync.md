@@ -229,3 +229,178 @@ export class FeishuDocClient {
   },
 }
 ```
+
+## Scenario: True Incremental DocX Update Flow
+
+### 1. Scope / Trigger
+
+- Trigger: Markdown document sync needed to stop creating duplicate Feishu docs and instead reuse a known remote `document_id` across runs.
+
+### 2. Signatures
+
+```ts
+export class FeishuDocClient {
+  async documentExists(docId: string): Promise<boolean>;
+  async updateDocument(
+    docId: string,
+    markdownContent: string,
+    options?: { parentBlockId?: string },
+  ): Promise<void>;
+}
+
+export interface FileState {
+  remote?: {
+    type: 'document';
+    token: string;
+    title?: string;
+    parentFolderToken?: string;
+    url?: string;
+  };
+}
+```
+
+### 3. Contracts
+
+- Primary identity for a Markdown document is `state[relPath].remote.token`.
+- Update order is:
+  1. try persisted `remote.token`
+  2. if missing or stale, try same remote folder + same document title recovery
+  3. if recovery fails, create a new document
+- In-place document update is implemented as:
+  1. `GET /open-apis/docx/v1/documents/:document_id`
+  2. `GET /open-apis/docx/v1/documents/:document_id/blocks/:block_id/children`
+  3. `DELETE /open-apis/docx/v1/documents/:document_id/blocks/:block_id/children/batch_delete`
+  4. `POST /open-apis/docx/v1/documents/:document_id/blocks/:block_id/children`
+- The parent block for current whole-document replacement is the root page block, i.e. the `document_id` itself.
+- Recovery by title must stay scoped to the resolved remote parent folder; never search the whole drive globally by title.
+- Same-folder title recovery is a fallback only. It must not run before a persisted `remote.token` lookup.
+- Existing document identity must only be written back to state after the remote update/create operation succeeds.
+
+### 4. Validation & Error Matrix
+
+| Case | Expected behavior |
+|------|-------------------|
+| `GET /documents/:document_id` returns not found | treat persisted remote as stale and continue to recovery/create |
+| Child list returns zero blocks | skip delete and append new blocks directly |
+| Child list returns `n > 0` blocks | delete `[0, n)` before appending replacement blocks |
+| Append fails after delete | surface sync failure; do not mark local state as successful |
+| Multiple same-title docs exist in one folder during recovery | reuse the first valid doc to stop duplicate growth, but log the ambiguity |
+| Recovery title match resolves to a non-docx drive item | ignore it and continue searching/creating |
+
+### 5. Good / Base / Bad Cases
+
+- Good: local `03-bbb/03未命名.md` keeps the same remote doc URL after repeated edits and plugin reloads.
+- Base: if sync state is missing, recovery may reuse one same-title doc in the same remote folder.
+- Bad: delete all same-title docs before checking the persisted `docId`, or recover by title across unrelated remote folders.
+
+### 6. Tests Required
+
+- Create a Markdown doc, sync it, edit it, sync again, and assert the remote doc URL is unchanged.
+- Reload the plugin between two edits and assert the second sync still updates the same remote doc.
+- Delete the remote doc manually, sync again, and assert recovery or recreation succeeds without leaving the state half-written.
+- Seed multiple same-title docs in one remote folder with missing local state and assert sync reuses one instead of creating a new duplicate.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+await deleteExistingItems(parentFolderToken, docTitle);
+const result = await feishuDocClient.createDocument(docTitle, markdownText, {
+  parentFolderToken,
+});
+```
+
+#### Correct
+
+```ts
+const previousToken = previousState?.remote?.token;
+
+if (previousToken) {
+  await feishuDocClient.updateDocument(previousToken, markdownText);
+} else {
+  const recoveredToken = await recoverExistingDocumentToken(parentFolderToken, docTitle);
+  if (recoveredToken) {
+    await feishuDocClient.updateDocument(recoveredToken, markdownText);
+  } else {
+    await feishuDocClient.createDocument(docTitle, markdownText, {
+      parentFolderToken,
+    });
+  }
+}
+```
+
+## Scenario: Inspectable DocX API Errors
+
+### 1. Scope / Trigger
+
+- Trigger: DocX APIs return both HTTP status and Feishu `code/msg`; using default throwing hides the response body and makes missing-doc recovery brittle.
+
+### 2. Signatures
+
+- [`src/sync/feishu-doc-client.ts`](../../../src/sync/feishu-doc-client.ts)
+  - `requestApi(init, action)`
+  - `buildError(action, response, payload)`
+  - `class FeishuDocClientError`
+
+### 3. Contracts
+
+- DocX client requests must use `requestUrl({ throw: false })`.
+- The client must inspect both:
+  - `response.status`
+  - Feishu JSON envelope `code` / `msg`
+- Missing-doc detection must currently treat these as stale/missing identity signals:
+  - HTTP `404`
+  - Feishu `code = 1770002`
+  - Feishu `code = 1770003`
+- Client code must throw a typed error that preserves:
+  - HTTP status
+  - Feishu API code
+  - Feishu message
+  - whether the error means “remote doc is missing”
+
+### 4. Validation & Error Matrix
+
+| Case | Expected behavior |
+|------|-------------------|
+| HTTP 200 and `code = 0` | success |
+| HTTP 200 and `code != 0` | typed DocX error with API code/message |
+| HTTP 404 and JSON body | typed DocX error with `isMissing = true` |
+| network failure before response | surface a normal thrown error; do not classify as missing doc |
+
+### 5. Good / Base / Bad Cases
+
+- Good: recovery code can branch on `error.isMissing`.
+- Base: logs still show the original status and Feishu `code`.
+- Bad: rely on default `requestUrl` throwing and then guess missing-doc behavior from a stringified error message.
+
+### 6. Tests Required
+
+- Simulate a missing remote doc and assert the update path reaches recovery/create.
+- Simulate a non-missing DocX API failure and assert sync fails instead of silently recreating a doc.
+- Inspect logs or thrown error fields and assert status/API code remain available.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const response = await requestUrl({
+  url,
+  method: 'GET',
+});
+```
+
+#### Correct
+
+```ts
+const response = await requestUrl({
+  url,
+  method: 'GET',
+  throw: false,
+});
+
+if (response.status >= 400 || response.json.code !== 0) {
+  throw buildError(action, response, response.json);
+}
+```
