@@ -1,0 +1,58 @@
+{
+  "id": "local-vault-dev-setup",
+  "name": "local-vault-dev-setup",
+  "title": "Set up local vault development architecture",
+  "description": "Add local vault link helpers, refine dev workflow, and connect the plugin project to the test vault",
+  "status": "completed",
+  "dev_type": "docs",
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "ph",
+  "assignee": "ph",
+  "createdAt": "2026-04-19",
+  "completedAt": "2026-04-19",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "brainstorm"
+    },
+    {
+      "phase": 2,
+      "action": "research"
+    },
+    {
+      "phase": 3,
+      "action": "implement"
+    },
+    {
+      "phase": 4,
+      "action": "check"
+    },
+    {
+      "phase": 5,
+      "action": "update-spec"
+    },
+    {
+      "phase": 6,
+      "action": "record-session"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "README.md",
+    "package.json",
+    "scripts/dev/",
+    "dev-vault.example.json"
+  ],
+  "notes": "Added local vault link helpers, created the test-vault junction, and verified npm run build plus vault status output.",
+  "meta": {}
+}

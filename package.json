@@ -1,0 +1,27 @@
+{
+  "name": "sync-obsidian-feishu",
+  "version": "0.1.0",
+  "description": "Obsidian plugin scaffold for syncing vault content to Feishu",
+  "main": "main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node build/esbuild.config.mjs",
+    "build": "tsc --noEmit --skipLibCheck --project build/tsconfig.json && node build/esbuild.config.mjs production",
+    "vault:link": "powershell -ExecutionPolicy Bypass -File ./scripts/dev/link-plugin.ps1",
+    "vault:status": "powershell -ExecutionPolicy Bypass -File ./scripts/dev/status-plugin.ps1"
+  },
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "feishu"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^24.7.2",
+    "esbuild": "^0.25.10",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "obsidian": "latest"
+  }
+}

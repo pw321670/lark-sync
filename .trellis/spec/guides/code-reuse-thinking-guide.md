@@ -1,105 +1,106 @@
 # Code Reuse Thinking Guide
 
-> **Purpose**: Stop and think before creating new code - does it already exist?
+> Purpose: avoid creating a second implementation while extracting this standalone sync prototype into an Obsidian plugin.
 
 ---
 
-## The Problem
+## The Real Duplication Risk Here
 
-**Duplicated code is the #1 source of inconsistency bugs.**
+This repo is likely to grow in two directions at once:
+- keep the current standalone script behavior working
+- add an Obsidian plugin layer on top of it
 
-When you copy-paste or rewrite existing logic:
-- Bug fixes don't propagate
-- Behavior diverges over time
-- Codebase becomes harder to understand
+The highest-risk mistake is duplicating logic from `auth.js` or `sync.js` into plugin-specific code instead of extracting shared modules.
 
 ---
 
-## Before Writing New Code
+## Search Before You Extract
 
-### Step 1: Search First
+Use search before introducing a new helper:
 
 ```bash
-# Search for similar function names
-grep -r "functionName" .
-
-# Search for similar logic
-grep -r "keyword" .
+rg "normalizeRelPath|shouldExclude|refreshUserAccessToken|ensureFolder|uploadSmallFile|readJson|saveJson" .
 ```
 
-### Step 2: Ask These Questions
+If a helper already exists, prefer:
+- moving it into a shared module
+- renaming it with a clearer boundary
+- adapting callers to the extracted version
 
-| Question | If Yes... |
-|----------|-----------|
-| Does a similar function exist? | Use or extend it |
-| Is this pattern used elsewhere? | Follow the existing pattern |
-| Could this be a shared utility? | Create it in the right place |
-| Am I copying code from another file? | **STOP** - extract to shared |
+Do not keep both old and new implementations without a deliberate compatibility reason.
 
 ---
 
-## Common Duplication Patterns
+## Reuse Targets In The Current Codebase
 
-### Pattern 1: Copy-Paste Functions
+These are the first candidates for shared extraction:
 
-**Bad**: Copying a validation function to another file
+- JSON file helpers in `auth.js` and `sync.js`
+- token refresh and auth request code
+- path normalization and exclude matching
+- recursive vault walking
+- folder ensure/list logic against Feishu
+- upload/delete orchestration
 
-**Good**: Extract to shared utilities, import where needed
-
-### Pattern 2: Similar Components
-
-**Bad**: Creating a new component that's 80% similar to existing
-
-**Good**: Extend existing component with props/variants
-
-### Pattern 3: Repeated Constants
-
-**Bad**: Defining the same constant in multiple files
-
-**Good**: Single source of truth, import everywhere
+If you touch one of these, ask whether the plugin layer should call the same function later.
 
 ---
 
-## When to Abstract
+## Preferred Extraction Shape
 
-**Abstract when**:
-- Same code appears 3+ times
-- Logic is complex enough to have bugs
-- Multiple people might need this
+Use this direction of travel:
 
-**Don't abstract when**:
-- Only used once
-- Trivial one-liner
-- Abstraction would be more complex than duplication
+- shell-specific code stays at the edge
+  - standalone edge: browser launch, local HTTP callback, console logs
+  - plugin edge: command registration, settings tab, notices, progress UI
+- shared core handles deterministic sync behavior
+  - config validation
+  - path normalization
+  - folder/file mapping
+  - Feishu API sequencing
+  - state updates
 
----
-
-## After Batch Modifications
-
-When you've made similar changes to multiple files:
-
-1. **Review**: Did you catch all instances?
-2. **Search**: Run grep to find any missed
-3. **Consider**: Should this be abstracted?
+This keeps the future plugin thin and prevents behavior drift.
 
 ---
 
-## Gotcha: Asymmetric Mechanisms Producing Same Output
+## Common Anti-Patterns
 
-**Problem**: When two different mechanisms must produce the same file set (e.g., recursive directory copy for init vs. manual `files.set()` for update), structural changes (renaming, moving, adding subdirectories) only propagate through the automatic mechanism. The manual one silently drifts.
+### Anti-pattern 1: Copying a function into the plugin layer
 
-**Symptom**: Init works perfectly, but update creates files at wrong paths or misses files entirely.
+Bad:
+- `sync.js` keeps one upload flow
+- plugin command creates a second upload flow
 
-**Prevention checklist**:
-- [ ] When migrating directory structures, search for ALL code paths that reference the old structure
-- [ ] If one path is auto-derived (glob/copy) and another is manually listed, the manual one needs updating
-- [ ] Add a regression test that compares outputs from both mechanisms
+Better:
+- extract one upload service
+- both standalone and plugin edges call it
+
+### Anti-pattern 2: Repeating config field knowledge
+
+Bad:
+- config defaults live in one place
+- UI labels and validation rules guess the same shape elsewhere
+
+Better:
+- one canonical config contract
+- UI and runtime read from the same schema or mapping
+
+### Anti-pattern 3: Parallel logging styles
+
+Bad:
+- console output says one thing
+- plugin notices summarize a different outcome
+
+Better:
+- shared result objects
+- edge layers format them for console or UI
 
 ---
 
-## Checklist Before Commit
+## Extraction Checklist
 
-- [ ] Searched for existing similar code
-- [ ] No copy-pasted logic that should be shared
-- [ ] Constants defined in one place
-- [ ] Similar patterns follow same structure
+- [ ] I searched for an existing helper before creating a new one
+- [ ] The new boundary reduces duplication instead of moving it around
+- [ ] Standalone and plugin paths can still share behavior after this change
+- [ ] I did not leave stale copies of logic behind

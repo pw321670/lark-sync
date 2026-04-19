@@ -1,0 +1,53 @@
+{
+  "id": "sync-engine",
+  "name": "sync-engine",
+  "title": "sync-engine-worker",
+  "description": "",
+  "status": "done",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "ph",
+  "assignee": "ph",
+  "createdAt": "2026-04-19",
+  "completedAt": "2026-04-19",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 6,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "brainstorm"
+    },
+    {
+      "phase": 2,
+      "action": "research"
+    },
+    {
+      "phase": 3,
+      "action": "implement"
+    },
+    {
+      "phase": 4,
+      "action": "check"
+    },
+    {
+      "phase": 5,
+      "action": "update-spec"
+    },
+    {
+      "phase": 6,
+      "action": "record-session"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "04-19-core-sync",
+  "relatedFiles": [],
+  "notes": "✅ 同步引擎模块已完成：文件扫描、增量同步、并发上传、错误重试、进度跟踪",
+  "meta": {}
+}

@@ -1,0 +1,5 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/config.yaml", "reason": "Current Trellis configuration"}
+{"file": ".codex/hooks.json", "reason": "Codex hook capabilities"}
+{"file": ".codex/hooks/session-start.py", "reason": "Codex session-start injection behavior"}
+{"file": ".claude/settings.json", "reason": "Reference Trellis hook coverage in Claude mode"}

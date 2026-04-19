@@ -1,0 +1,53 @@
+{
+  "id": "sync-engine-core",
+  "name": "sync-engine-core",
+  "title": "实现飞书同步引擎核心功能",
+  "description": "",
+  "status": "done",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "ph",
+  "assignee": "ph",
+  "createdAt": "2026-04-19",
+  "completedAt": "2026-04-19",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 6,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "brainstorm"
+    },
+    {
+      "phase": 2,
+      "action": "research"
+    },
+    {
+      "phase": 3,
+      "action": "implement"
+    },
+    {
+      "phase": 4,
+      "action": "check"
+    },
+    {
+      "phase": 5,
+      "action": "update-spec"
+    },
+    {
+      "phase": 6,
+      "action": "record-session"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "✅ 飞书同步引擎核心功能已完成：文件扫描过滤、增量检测、文件夹创建、文件上传、并发控制",
+  "meta": {}
+}

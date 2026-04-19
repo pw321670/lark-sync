@@ -1,7 +1,10 @@
 # Trellis Configuration
-# Project-level settings for the Trellis workflow system
+# Project-specific notes for sync-obsidian-feishu.
 #
-# All values have sensible defaults. Only override what you need.
+# In this repository:
+# - backend spec == sync core, auth flow, Feishu integration, local state
+# - frontend spec == future Obsidian plugin shell, settings, commands, UX
+# - shared guides == migration and sync-safety thinking support
 
 #-------------------------------------------------------------------------------
 # Session Recording
@@ -19,8 +22,8 @@ max_journal_lines: 2000
 #-------------------------------------------------------------------------------
 
 # Shell commands to run after task lifecycle events.
-# Each hook receives TASK_JSON_PATH environment variable pointing to task.json.
-# Hook failures print a warning but do not block the main operation.
+# Each hook receives TASK_JSON_PATH pointing to task.json.
+# Hook failures should not block the main task operation.
 #
 # hooks:
 #   after_create:
@@ -36,18 +39,22 @@ max_journal_lines: 2000
 # Monorepo / Packages
 #-------------------------------------------------------------------------------
 
-# Declare packages for monorepo projects.
-# Trellis auto-detects workspaces during `trellis init`, but you can also
-# configure them manually here.
+# This repo is currently single-repo.
+# If the standalone scripts are later split into packages, common candidates are:
 #
 # packages:
-#   frontend:
-#     path: packages/frontend
-#   backend:
-#     path: packages/backend
-#   docs:
-#     path: docs-site
-#     type: submodule
+#   sync-core:
+#     path: packages/sync-core
+#   obsidian-plugin:
+#     path: packages/obsidian-plugin
+#
+# default_package: sync-core
 
-# Default package used when --package is not specified.
-# default_package: frontend
+#-------------------------------------------------------------------------------
+# Optional Session Notes
+#-------------------------------------------------------------------------------
+
+# If this repo becomes a real monorepo later, consider enabling:
+#
+# session:
+#   spec_scope: active_task

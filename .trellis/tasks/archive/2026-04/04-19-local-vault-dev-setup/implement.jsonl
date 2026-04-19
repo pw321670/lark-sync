@@ -1,0 +1,11 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Plugin dev workflow guidance"}
+{"file": ".trellis/spec/frontend/plugin-architecture.md", "reason": "Keep plugin shell ownership clean"}
+{"file": ".trellis/spec/frontend/obsidian-boundaries.md", "reason": "Do not leak local-dev wiring into sync core"}
+{"file": ".trellis/spec/frontend/quality-and-compatibility.md", "reason": "Desktop-first local testing rules"}
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared guide index"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Avoid duplicate install flows"}
+{"file": ".trellis/spec/guides/sync-safety-guide.md", "reason": "Safe local testing constraints"}
+{"file": "manifest.json", "reason": "Plugin id contract"}
+{"file": "package.json", "reason": "Current build scripts"}
+{"file": "README.md", "reason": "Current project instructions"}

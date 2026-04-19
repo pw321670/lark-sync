@@ -1,19 +1,20 @@
-# Thinking Guides
+# Project Thinking Guides
 
-> **Purpose**: Expand your thinking to catch things you might not have considered.
+> Purpose: catch the migration and sync risks that are easy to miss in this Obsidian-to-Feishu project.
 
 ---
 
-## Why Thinking Guides?
+## Project Context
 
-**Most bugs and tech debt come from "didn't think of that"**, not from lack of skill:
+This repository is in a transition state:
+- Today it is a standalone Node.js sync prototype driven by `auth.js` and `sync.js`
+- The next stage is an Obsidian plugin that reuses the current auth and sync behavior instead of rewriting it from scratch
 
-- Didn't think about what happens at layer boundaries → cross-layer bugs
-- Didn't think about code patterns repeating → duplicated code everywhere
-- Didn't think about edge cases → runtime errors
-- Didn't think about future maintainers → unreadable code
-
-These guides help you **ask the right questions before coding**.
+Most mistakes in this repo will happen at boundaries:
+- config fields moving from JSON files into plugin settings
+- filesystem paths being normalized differently across modules
+- sync state being updated without preserving current semantics
+- Feishu API side effects being triggered without enough safeguards
 
 ---
 
@@ -21,59 +22,41 @@ These guides help you **ask the right questions before coding**.
 
 | Guide | Purpose | When to Use |
 |-------|---------|-------------|
-| [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
-| [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
+| [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Prevent duplicate logic during script-to-plugin extraction | When moving logic into shared modules or plugin services |
+| [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Map data flow across settings, filesystem, sync state, and Feishu APIs | When a change touches more than one boundary |
+| [Sync Safety Guide](./sync-safety-guide.md) | Prevent destructive or misleading sync behavior | When a change can affect uploads, deletes, retries, or user trust |
 
 ---
 
-## Quick Reference: Thinking Triggers
+## Quick Triggers
 
-### When to Think About Cross-Layer Issues
+Read a guide before coding when any of the following is true:
 
-- [ ] Feature touches 3+ layers (API, Service, Component, Database)
-- [ ] Data format changes between layers
-- [ ] Multiple consumers need the same data
-- [ ] You're not sure where to put some logic
-
-→ Read [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md)
-
-### When to Think About Code Reuse
-
-- [ ] You're writing similar code to something that exists
-- [ ] You see the same pattern repeated 3+ times
-- [ ] You're adding a new field to multiple places
-- [ ] **You're modifying any constant or config**
-- [ ] **You're creating a new utility/helper function** ← Search first!
-
-→ Read [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md)
+- You are changing `config.example.json`, `config.json`, or `state.json` semantics
+- You are modifying path normalization, exclude logic, or relative-path keys
+- You are changing Feishu folder creation, upload, delete, or retry behavior
+- You are adding plugin settings, commands, notices, or long-running sync UX
+- You are extracting logic from `auth.js` or `sync.js` into reusable modules
 
 ---
 
-## Pre-Modification Rule (CRITICAL)
+## Project-Specific Search Rule
 
-> **Before changing ANY value, ALWAYS search first!**
+Before changing any external contract, search for all usages first:
 
 ```bash
-# Search for the value you're about to change
-grep -r "value_to_change" .
+rg "fieldName|functionName|endpointFragment" .
 ```
 
-This single habit prevents most "forgot to update X" bugs.
+Especially search for:
+- config keys
+- state fields
+- path normalization helpers
+- Feishu endpoint URLs
+- user-facing status messages
 
 ---
 
-## How to Use This Directory
+## Core Principle
 
-1. **Before coding**: Skim the relevant thinking guide
-2. **During coding**: If something feels repetitive or complex, check the guides
-3. **After bugs**: Add new insights to the relevant guide (learn from mistakes)
-
----
-
-## Contributing
-
-Found a new "didn't think of that" moment? Add it to the relevant guide.
-
----
-
-**Core Principle**: 30 minutes of thinking saves 3 hours of debugging.
+Protect behavior first, then improve structure.

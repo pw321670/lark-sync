@@ -1,94 +1,108 @@
 # Cross-Layer Thinking Guide
 
-> **Purpose**: Think through data flow across layers before implementing.
+> Purpose: make boundary decisions explicit before changing auth, sync, or plugin-facing behavior.
 
 ---
 
-## The Problem
+## The Main Data Flow
 
-**Most bugs happen at layer boundaries**, not within layers.
+In this project, most features eventually touch this chain:
 
-Common cross-layer bugs:
-- API returns format A, frontend expects format B
-- Database stores X, service transforms to Y, but loses data
-- Multiple layers implement the same logic differently
-
----
-
-## Before Implementing Cross-Layer Features
-
-### Step 1: Map the Data Flow
-
-Draw out how data moves:
-
-```
-Source → Transform → Store → Retrieve → Transform → Display
+```text
+Plugin settings or config file
+-> auth/token lifecycle
+-> filesystem scan
+-> normalized relative paths
+-> folder mapping
+-> Feishu Drive API calls
+-> local sync state
+-> user-facing status and errors
 ```
 
-For each arrow, ask:
-- What format is the data in?
-- What could go wrong?
-- Who is responsible for validation?
-
-### Step 2: Identify Boundaries
-
-| Boundary | Common Issues |
-|----------|---------------|
-| API ↔ Service | Type mismatches, missing fields |
-| Service ↔ Database | Format conversions, null handling |
-| Backend ↔ Frontend | Serialization, date formats |
-| Component ↔ Component | Props shape changes |
-
-### Step 3: Define Contracts
-
-For each boundary:
-- What is the exact input format?
-- What is the exact output format?
-- What errors can occur?
+If a change touches two or more steps, treat it as cross-layer work.
 
 ---
 
-## Common Cross-Layer Mistakes
+## Boundary Map
 
-### Mistake 1: Implicit Format Assumptions
-
-**Bad**: Assuming date format without checking
-
-**Good**: Explicit format conversion at boundaries
-
-### Mistake 2: Scattered Validation
-
-**Bad**: Validating the same thing in multiple layers
-
-**Good**: Validate once at the entry point
-
-### Mistake 3: Leaky Abstractions
-
-**Bad**: Component knows about database schema
-
-**Good**: Each layer only knows its neighbors
+| Boundary | Current Source | Typical Risk |
+|----------|----------------|--------------|
+| Settings -> persisted config | `config.example.json`, `config.json` | Missing field validation, secrets leaking into logs |
+| OAuth callback -> token storage | `auth.js` | Refresh tokens overwritten incorrectly |
+| Filesystem -> normalized path keys | `sync.js` | Mixed `\\` and `/`, exclude mismatches |
+| Path key -> Feishu folder/file location | `sync.js` | Uploading to the wrong folder tree |
+| Feishu API result -> local state | `sync.js` | State says upload succeeded when remote operation failed |
+| Sync engine -> future Obsidian UX | future plugin layer | UI reports success without surfacing partial failure |
 
 ---
 
-## Checklist for Cross-Layer Features
+## Before Implementing
 
-Before implementation:
-- [ ] Mapped the complete data flow
-- [ ] Identified all layer boundaries
-- [ ] Defined format at each boundary
-- [ ] Decided where validation happens
+### 1. Write down the contract
+
+For every boundary you touch, define:
+- input shape
+- output shape
+- where validation happens
+- what happens on partial failure
+
+### 2. Check the current anchor points
+
+Read the functions that already own the behavior:
+- `auth.js`: `getUserAccessToken()`, local callback server, config persistence
+- `sync.js`: `normalizeRelPath()`, `shouldExclude()`, `walkDir()`, `refreshUserAccessToken()`, `ensureFolder()`, `uploadSmallFile()`, `deleteFileByToken()`, `main()`
+
+Do not add a second source of truth unless you are extracting the first one.
+
+### 3. Decide which layer owns what
+
+Use this split:
+- plugin layer owns commands, settings UI, notices, and user actions
+- shared sync core owns filesystem traversal, token refresh, mapping, and Feishu requests
+- persistence layer owns config/state serialization and field compatibility
+
+---
+
+## Common Failure Modes
+
+### Failure 1: Config shape changes in one place only
+
+Symptoms:
+- plugin settings save a new key
+- script fallback still expects the old key
+- runtime fails only after authorization or sync starts
+
+### Failure 2: Path normalization is not applied symmetrically
+
+Symptoms:
+- exclude rules fail on Windows paths
+- state keys stop matching the same file after refactor
+
+### Failure 3: UI success hides sync failure
+
+Symptoms:
+- command palette action finishes
+- user sees "done"
+- one or more uploads silently failed or were skipped
+
+### Failure 4: Refactor moves logic but leaves side effects behind
+
+Symptoms:
+- a new shared helper exists
+- old code path still writes config or state separately
+- behavior diverges between standalone and plugin modes
+
+---
+
+## Checklist
+
+Before commit:
+- [ ] I mapped every boundary touched by the change
+- [ ] I identified the single owner for each piece of logic
+- [ ] I verified config/state compatibility
+- [ ] I traced partial failure behavior back to the user-facing layer
 
 After implementation:
-- [ ] Tested with edge cases (null, empty, invalid)
-- [ ] Verified error handling at each boundary
-- [ ] Checked data survives round-trip
-
----
-
-## When to Create Flow Documentation
-
-Create detailed flow docs when:
-- Feature spans 3+ layers
-- Multiple teams are involved
-- Data format is complex
-- Feature has caused bugs before
+- [ ] I tested at least one happy path
+- [ ] I tested one auth failure or invalid config path
+- [ ] I tested one sync edge case involving excludes, folder mapping, or retries

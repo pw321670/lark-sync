@@ -1,0 +1,18 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/frontend/plugin-architecture.md", "reason": "Plugin shell ownership and lifecycle"}
+{"file": ".trellis/spec/frontend/obsidian-boundaries.md", "reason": "Boundary split between plugin shell and sync core"}
+{"file": ".trellis/spec/frontend/settings-and-secrets.md", "reason": "Settings contract mapping"}
+{"file": ".trellis/spec/frontend/commands-and-status-ux.md", "reason": "Commands and status UX expectations"}
+{"file": ".trellis/spec/frontend/quality-and-compatibility.md", "reason": "Desktop-first plugin compatibility rules"}
+{"file": ".trellis/spec/backend/module-boundaries.md", "reason": "Extraction plan from standalone scripts"}
+{"file": ".trellis/spec/backend/filesystem-and-state.md", "reason": "Path and state behavior to preserve"}
+{"file": ".trellis/spec/backend/quality-and-safety.md", "reason": "Migration safety rules"}
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared thinking guide index"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer migration checks"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Avoid duplicated script and plugin logic"}
+{"file": ".trellis/spec/guides/sync-safety-guide.md", "reason": "Sync safety checks"}
+{"file": "auth.js", "reason": "Current auth runtime"}
+{"file": "sync.js", "reason": "Current sync runtime"}
+{"file": "config.example.json", "reason": "Current config contract"}

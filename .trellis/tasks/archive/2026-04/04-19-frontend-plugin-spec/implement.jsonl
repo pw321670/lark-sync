@@ -1,0 +1,4 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": "auth.js", "reason": "Current auth UX entrypoint to adapt into plugin"}
+{"file": "sync.js", "reason": "Current sync flow to surface through plugin UX"}
+{"file": "config.example.json", "reason": "Settings fields the plugin must expose"}

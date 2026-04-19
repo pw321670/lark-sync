@@ -1,0 +1,36 @@
+/* 飞书同步插件样式 */
+
+/* 同步按钮图标动画 */
+.feishu-sync-custom.syncing svg {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 成功状态 */
+.feishu-sync-custom.success svg {
+  color: var(--color-success);
+}
+
+/* 错误状态 */
+.feishu-sync-custom.error svg {
+  color: var(--color-error);
+}
+
+/* 警告状态 */
+.feishu-sync-custom.warning svg {
+  color: var(--color-warning);
+}
+
+/* 禁用状态 */
+.feishu-sync-custom.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}

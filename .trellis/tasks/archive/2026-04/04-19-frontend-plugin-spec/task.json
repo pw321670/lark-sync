@@ -1,0 +1,55 @@
+{
+  "id": "frontend-plugin-spec",
+  "name": "frontend-plugin-spec",
+  "title": "Fill frontend spec for Obsidian plugin migration",
+  "description": "Define conventions for the upcoming Obsidian plugin layer built on top of the current standalone scripts",
+  "status": "completed",
+  "dev_type": "docs",
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "ph",
+  "assignee": "ph",
+  "createdAt": "2026-04-19",
+  "completedAt": "2026-04-19",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "brainstorm"
+    },
+    {
+      "phase": 2,
+      "action": "research"
+    },
+    {
+      "phase": 3,
+      "action": "implement"
+    },
+    {
+      "phase": 4,
+      "action": "check"
+    },
+    {
+      "phase": 5,
+      "action": "update-spec"
+    },
+    {
+      "phase": 6,
+      "action": "record-session"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/spec/frontend/"
+  ],
+  "notes": "Completed by parallel spec bootstrap worker using local repository analysis.",
+  "meta": {}
+}

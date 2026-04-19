@@ -1,0 +1,42 @@
+{
+  "id": "00-bootstrap-guidelines",
+  "name": "Bootstrap Guidelines",
+  "description": "Fill in project development guidelines for AI agents",
+  "status": "completed",
+  "dev_type": "docs",
+  "priority": "P1",
+  "creator": "ph",
+  "assignee": "ph",
+  "createdAt": "2026-04-19",
+  "completedAt": "2026-04-19",
+  "commit": null,
+  "subtasks": [
+    {
+      "name": "Create backend spec task and replace default backend templates",
+      "status": "completed"
+    },
+    {
+      "name": "Create frontend/plugin spec task and replace default frontend templates",
+      "status": "completed"
+    },
+    {
+      "name": "Rewrite shared guides and customize Trellis workflow",
+      "status": "completed"
+    }
+  ],
+  "children": [
+    "04-19-backend-spec",
+    "04-19-frontend-plugin-spec",
+    "04-19-trellis-workflow-customization"
+  ],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/spec/backend/",
+    ".trellis/spec/frontend/",
+    ".trellis/spec/guides/",
+    ".trellis/workflow.md",
+    ".agents/skills/trellis-local/SKILL.md"
+  ],
+  "notes": "Customized bootstrap task for an Obsidian-to-Feishu plugin migration project",
+  "meta": {}
+}

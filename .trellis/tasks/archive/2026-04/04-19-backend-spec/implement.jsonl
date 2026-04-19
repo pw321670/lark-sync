@@ -1,0 +1,4 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": "auth.js", "reason": "Current OAuth bootstrap flow"}
+{"file": "sync.js", "reason": "Current sync engine behavior"}
+{"file": "config.example.json", "reason": "Stable configuration contract"}
