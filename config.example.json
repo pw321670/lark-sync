@@ -1,0 +1,16 @@
+{
+  "vaultPath": "D:\\path\\to\\your\\obsidian-vault",
+  "feishuRootFolderToken": "your_feishu_root_folder_token",
+  "appId": "your_feishu_app_id",
+  "appSecret": "your_feishu_app_secret",
+  "redirectUri": "http://127.0.0.1:3333/callback",
+  "userAccessToken": "",
+  "refreshToken": "",
+  "exclude": [
+    ".trash",
+    ".obsidian/workspace.json",
+    ".obsidian/workspaces.json"
+  ],
+  "maxDirectUploadMB": 20
+}
+
