@@ -18,4 +18,3 @@ test/fixtures/*.json
 test-api-call.sh
 test-api-request.json
 test-feishu-api.cjs
-测试文档模块.md
