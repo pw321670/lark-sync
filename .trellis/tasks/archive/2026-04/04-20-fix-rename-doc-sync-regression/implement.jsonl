@@ -1,0 +1,9 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/backend/filesystem-and-state.md", "reason": "Markdown doc mode state compatibility and skip semantics"}
+{"file": ".trellis/spec/backend/feishu-drive-sync.md", "reason": "Document-mode upload/recovery behavior and remote identity rules"}
+{"file": ".trellis/spec/backend/quality-and-safety.md", "reason": "Sync summary and manual regression expectations"}
+{"file": ".trellis/spec/frontend/settings-and-secrets.md", "reason": "Plugin data migration and settings persistence boundaries"}
+{"file": ".trellis/spec/frontend/commands-and-status-ux.md", "reason": "Rename-safe notices and sync result wording"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer config/auth/state/sync alignment"}

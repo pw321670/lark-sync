@@ -1,0 +1,5 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check.md", "reason": "Code quality check spec"}
+{"file": ".trellis/spec/backend/filesystem-and-state.md", "reason": "Verify markdown state migration and skip behavior"}
+{"file": ".trellis/spec/frontend/commands-and-status-ux.md", "reason": "Verify renamed notices and summary wording"}
+{"file": ".trellis/spec/backend/feishu-drive-sync.md", "reason": "Verify doc-mode recovery and cleanup path"}
