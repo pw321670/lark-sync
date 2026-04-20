@@ -105,7 +105,7 @@ export function registerSyncCommands(
   if (handlers.cancelSync) {
     plugin.addCommand({
       id: 'feishu-sync-cancel',
-      name: 'Cancel sync to Feishu',
+      name: 'Cancel Lark Sync',
       callback: handlers.cancelSync,
     });
   }

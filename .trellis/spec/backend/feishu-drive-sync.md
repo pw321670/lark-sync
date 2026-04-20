@@ -50,9 +50,11 @@ For each changed file:
 2. Read local file content through the injected vault reader.
 3. If the file is Markdown and `markdownSyncMode === 'document'`:
    - try the persisted remote `docId` from sync state first
+   - if file stats are unchanged but sync state has no usable `remote.token`, treat the file as needing recovery instead of skipping it
    - if that remote document still exists, update it in place
    - otherwise try same-folder and same-title recovery
    - only create a new online document when neither of the above succeeds
+   - after the document path succeeds, delete any stale same-folder regular-file upload for the full `.md` filename
 4. Otherwise:
    - find same-name files in the target folder
    - delete all same-name remote matches
@@ -68,6 +70,7 @@ Document mode is now identity-preserving across runs: the same local `relPath` r
 - In document mode, the primary remote identity is the persisted `remote.token` (`document_id`) from sync state.
 - Same-folder and same-title matching is now a recovery fallback, not the primary identity mechanism.
 - The fallback title used in document mode is the Markdown filename without `.md`.
+- Missing `remote.token` in document mode is a state-repair case, not a reason to skip an unchanged Markdown file.
 - The current sync engine does not compare remote hashes, timestamps, or metadata.
 - Local file deletion is not mirrored remotely.
 - Folder token caching is in-memory for one sync run.
@@ -102,9 +105,11 @@ These are current plugin-runtime behaviors and should not be described as a lega
 
 - Re-uploading a changed file deletes all same-name remote files in the target folder first.
 - Re-syncing a Markdown file in document mode now keeps the same remote document URL when the stored `docId` is still valid.
+- Re-running document mode with unchanged local bytes but missing `remote.token` now repairs the remote identity instead of reporting the file as skipped.
 - Document-mode content replacement is implemented by clearing the root page children and recreating the Markdown-derived blocks inside the same document.
 - Remote document identity is preserved, but block ids are not preserved across document-content replacement.
 - If sync state is missing, same-folder title recovery may attach the path to the first matching remote document in that folder to avoid creating more duplicates.
+- When a Markdown note is synced as an online doc, any stale regular Drive file with the same local `.md` filename is deleted after the doc update/create succeeds.
 - Uploads can run concurrently; folder-map creation stays ordered.
 - Files above `maxDirectUploadMB` are skipped and reported, not uploaded later automatically.
 
@@ -129,6 +134,8 @@ These are current plugin-runtime behaviors and should not be described as a lega
 - Set `markdownSyncMode=document` and verify Markdown files create online docs while non-Markdown files still upload normally.
 - Re-run Markdown document sync after modifying the same file and verify the remote doc URL stays the same.
 - Reload the plugin and verify a later Markdown edit still updates the same remote doc rather than creating a duplicate.
+- Delete `remote.token` from one unchanged Markdown state entry and verify the next document-mode sync repairs it instead of skipping the file.
+- Seed a stale `Note.md` regular file beside the online doc and verify the next successful document-mode sync removes the stale regular file.
 - Verify configured upload retries and concurrent upload limits behave as expected.
 
 ## Scenario: Markdown To Feishu Online Documents
@@ -266,6 +273,7 @@ export interface FileState {
   1. try persisted `remote.token`
   2. if missing or stale, try same remote folder + same document title recovery
   3. if recovery fails, create a new document
+- If `size` and `mtimeMs` still match but `remote.token` is missing, the coordinator must still send the Markdown file through the recovery/create path instead of skipping it.
 - In-place document update is implemented as:
   1. `GET /open-apis/docx/v1/documents/:document_id`
   2. `GET /open-apis/docx/v1/documents/:document_id/blocks/:block_id/children`
@@ -275,17 +283,20 @@ export interface FileState {
 - Recovery by title must stay scoped to the resolved remote parent folder; never search the whole drive globally by title.
 - Same-folder title recovery is a fallback only. It must not run before a persisted `remote.token` lookup.
 - Existing document identity must only be written back to state after the remote update/create operation succeeds.
+- After document update/create succeeds, delete same-folder regular-file matches for the full Markdown filename such as `Note.md` so one local note does not leave two remote representations behind.
 
 ### 4. Validation & Error Matrix
 
 | Case | Expected behavior |
 |------|-------------------|
 | `GET /documents/:document_id` returns not found | treat persisted remote as stale and continue to recovery/create |
+| `size` and `mtimeMs` match but `remote.token` is missing | do not skip; run recovery/create and write a fresh `remote.token` on success |
 | Child list returns zero blocks | skip delete and append new blocks directly |
 | Child list returns `n > 0` blocks | delete `[0, n)` before appending replacement blocks |
 | Append fails after delete | surface sync failure; do not mark local state as successful |
 | Multiple same-title docs exist in one folder during recovery | reuse the first valid doc to stop duplicate growth, but log the ambiguity |
 | Recovery title match resolves to a non-docx drive item | ignore it and continue searching/creating |
+| A stale regular `Note.md` file still exists in the same folder | delete it after doc update/create succeeds |
 
 ### 5. Good / Base / Bad Cases
 
@@ -297,8 +308,10 @@ export interface FileState {
 
 - Create a Markdown doc, sync it, edit it, sync again, and assert the remote doc URL is unchanged.
 - Reload the plugin between two edits and assert the second sync still updates the same remote doc.
+- Remove `remote.token` from an unchanged Markdown state entry and assert the next sync still reaches recovery/create instead of reporting the file as skipped.
 - Delete the remote doc manually, sync again, and assert recovery or recreation succeeds without leaving the state half-written.
 - Seed multiple same-title docs in one remote folder with missing local state and assert sync reuses one instead of creating a new duplicate.
+- Seed a stale regular `Note.md` file beside the remote doc and assert a successful document-mode sync deletes that stale file.
 
 ### 7. Wrong vs Correct
 

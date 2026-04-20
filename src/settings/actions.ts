@@ -26,8 +26,9 @@ function restoreButtonState(button: HTMLButtonElement | undefined, originalLabel
 export async function testConnection(
   plugin: LarkSyncPlugin,
   button?: HTMLButtonElement,
+  refresh?: () => void,
 ): Promise<void> {
-  const originalLabel = setButtonState(button, true, 'Checking...');
+  const originalLabel = setButtonState(button, true, 'Authorizing...');
 
   try {
     const { config, auth } = plugin.getPluginData();
@@ -39,20 +40,21 @@ export async function testConnection(
     }
 
     if (!auth.refreshToken) {
-      new Notice('Starting Feishu authorization...', 4000);
+      new Notice('Opening Feishu authorization...', 4000);
       const authResult = await plugin.authorizeFeishu();
 
       if (!authResult.success) {
-        new Notice(`Feishu authorization failed: ${authResult.error}`, 8000);
+        new Notice(`Authorization failed: ${authResult.error}`, 8000);
         return;
       }
     }
 
     await plugin.verifyFeishuConnection();
-    new Notice('Feishu connection is ready. You can start syncing now.', 4000);
+    new Notice('Authorization successful.', 4000);
+    refresh?.();
   } catch (error) {
     new Notice(
-      `Connection test failed: ${error instanceof Error ? error.message : String(error)}`,
+      `Authorization failed: ${error instanceof Error ? error.message : String(error)}`,
       8000,
     );
   } finally {

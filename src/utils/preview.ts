@@ -37,7 +37,7 @@ export function buildSyncPreview(
 
   return {
     status: "preview",
-    message: `Previewed ${files.length} file(s) for Feishu sync.`,
+    message: `Previewed ${files.length} file(s) for Lark Sync.`,
     scannedAt: now.toISOString(),
     filesDiscovered: files.length,
     excludedCount,

@@ -77,7 +77,7 @@ export const DEFAULT_PLUGIN_DATA: PluginData = {
     retryAttempts: 3,
     retryDelay: 1000,
     logLevel: 'info',
-    markdownSyncMode: 'file',
+    markdownSyncMode: 'document',
   },
   auth: {
     userAccessToken: '',
@@ -89,6 +89,52 @@ export const DEFAULT_PLUGIN_DATA: PluginData = {
   lastSync: null,
   syncState: {},
 };
+
+function getRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
+}
+
+function hasOwn(record: Record<string, unknown> | undefined, key: string): boolean {
+  return !!record && Object.prototype.hasOwnProperty.call(record, key);
+}
+
+function pickByPresence<T>(primary: T, fallback: T, hasPrimary: boolean): T {
+  return hasPrimary ? primary : fallback;
+}
+
+function mergeFileStateMaps(
+  primary: SyncStateMap,
+  fallback: SyncStateMap,
+  primaryRawState?: Record<string, unknown>,
+): SyncStateMap {
+  const merged: SyncStateMap = { ...fallback };
+
+  for (const [relPath, primaryEntry] of Object.entries(primary)) {
+    const fallbackEntry = fallback[relPath];
+    if (!fallbackEntry) {
+      merged[relPath] = primaryEntry;
+      continue;
+    }
+
+    const rawEntry = getRecord(primaryRawState?.[relPath]);
+    merged[relPath] = {
+      size: pickByPresence(primaryEntry.size, fallbackEntry.size, hasOwn(rawEntry, 'size')),
+      mtimeMs: pickByPresence(primaryEntry.mtimeMs, fallbackEntry.mtimeMs, hasOwn(rawEntry, 'mtimeMs')),
+      uploadedAt: pickByPresence(
+        primaryEntry.uploadedAt,
+        fallbackEntry.uploadedAt,
+        hasOwn(rawEntry, 'uploadedAt'),
+      ),
+      remote: pickByPresence(
+        primaryEntry.remote,
+        fallbackEntry.remote,
+        hasOwn(rawEntry, 'remote'),
+      ),
+    };
+  }
+
+  return merged;
+}
 
 function getString(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback;
@@ -243,6 +289,112 @@ export function mergePluginData(raw: unknown): PluginData {
         ];
       }),
     ),
+  };
+}
+
+export function mergePluginDataWithFallback(primaryRaw: unknown, fallbackRaw: unknown): PluginData {
+  const primary = mergePluginData(primaryRaw);
+  const fallback = mergePluginData(fallbackRaw);
+
+  const primaryRoot = getRecord(primaryRaw);
+  const primaryConfig = getRecord(primaryRoot?.config);
+  const primaryAuth = getRecord(primaryRoot?.auth);
+  const primarySyncState = getRecord(primaryRoot?.syncState);
+
+  return {
+    config: {
+      feishuRootFolderToken: pickByPresence(
+        primary.config.feishuRootFolderToken,
+        fallback.config.feishuRootFolderToken,
+        hasOwn(primaryConfig, 'feishuRootFolderToken'),
+      ),
+      appId: pickByPresence(primary.config.appId, fallback.config.appId, hasOwn(primaryConfig, 'appId')),
+      appSecret: pickByPresence(
+        primary.config.appSecret,
+        fallback.config.appSecret,
+        hasOwn(primaryConfig, 'appSecret'),
+      ),
+      redirectUri: pickByPresence(
+        primary.config.redirectUri,
+        fallback.config.redirectUri,
+        hasOwn(primaryConfig, 'redirectUri'),
+      ),
+      fileMatchMode: pickByPresence(
+        primary.config.fileMatchMode,
+        fallback.config.fileMatchMode,
+        hasOwn(primaryConfig, 'fileMatchMode'),
+      ),
+      exclude: pickByPresence(primary.config.exclude, fallback.config.exclude, hasOwn(primaryConfig, 'exclude')),
+      maxDirectUploadMB: pickByPresence(
+        primary.config.maxDirectUploadMB,
+        fallback.config.maxDirectUploadMB,
+        hasOwn(primaryConfig, 'maxDirectUploadMB'),
+      ),
+      syncMode: pickByPresence(
+        primary.config.syncMode,
+        fallback.config.syncMode,
+        hasOwn(primaryConfig, 'syncMode'),
+      ),
+      scheduledSyncInterval: pickByPresence(
+        primary.config.scheduledSyncInterval,
+        fallback.config.scheduledSyncInterval,
+        hasOwn(primaryConfig, 'scheduledSyncInterval'),
+      ),
+      concurrentUploads: pickByPresence(
+        primary.config.concurrentUploads,
+        fallback.config.concurrentUploads,
+        hasOwn(primaryConfig, 'concurrentUploads'),
+      ),
+      retryAttempts: pickByPresence(
+        primary.config.retryAttempts,
+        fallback.config.retryAttempts,
+        hasOwn(primaryConfig, 'retryAttempts'),
+      ),
+      retryDelay: pickByPresence(
+        primary.config.retryDelay,
+        fallback.config.retryDelay,
+        hasOwn(primaryConfig, 'retryDelay'),
+      ),
+      logLevel: pickByPresence(
+        primary.config.logLevel,
+        fallback.config.logLevel,
+        hasOwn(primaryConfig, 'logLevel'),
+      ),
+      markdownSyncMode: pickByPresence(
+        primary.config.markdownSyncMode,
+        fallback.config.markdownSyncMode,
+        hasOwn(primaryConfig, 'markdownSyncMode'),
+      ),
+    },
+    auth: {
+      userAccessToken: pickByPresence(
+        primary.auth.userAccessToken,
+        fallback.auth.userAccessToken,
+        hasOwn(primaryAuth, 'userAccessToken'),
+      ),
+      refreshToken: pickByPresence(
+        primary.auth.refreshToken,
+        fallback.auth.refreshToken,
+        hasOwn(primaryAuth, 'refreshToken'),
+      ),
+      connectedAt: pickByPresence(
+        primary.auth.connectedAt,
+        fallback.auth.connectedAt,
+        hasOwn(primaryAuth, 'connectedAt'),
+      ),
+      expiresAt: pickByPresence(
+        primary.auth.expiresAt,
+        fallback.auth.expiresAt,
+        hasOwn(primaryAuth, 'expiresAt'),
+      ),
+      grantedScopes: pickByPresence(
+        primary.auth.grantedScopes,
+        fallback.auth.grantedScopes,
+        hasOwn(primaryAuth, 'grantedScopes'),
+      ),
+    },
+    lastSync: pickByPresence(primary.lastSync, fallback.lastSync, hasOwn(primaryRoot, 'lastSync')),
+    syncState: mergeFileStateMaps(primary.syncState, fallback.syncState, primarySyncState),
   };
 }
 

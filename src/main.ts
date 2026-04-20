@@ -15,6 +15,7 @@ import {
   DEFAULT_PLUGIN_DATA,
   getMissingConfigFields,
   mergePluginData,
+  mergePluginDataWithFallback,
   type FeishuSyncConfig,
   type PluginData,
   type SyncSummary,
@@ -363,24 +364,20 @@ export default class LarkSyncPlugin extends Plugin {
   }
 
   private async loadPluginData(): Promise<PluginData> {
-    const currentData = await this.loadData();
-    if (this.hasStoredPluginData(currentData)) {
-      return mergePluginData(currentData);
-    }
-
+    const currentRawData = await this.loadData();
+    const currentData = mergePluginData(currentRawData);
     const legacyData = await this.loadLegacyPluginData();
     if (legacyData) {
-      this.pluginData = legacyData;
-      await this.persistPluginData();
-      console.info(`Migrated plugin data from ${LEGACY_PLUGIN_ID} to ${this.manifest.id}.`);
-      return legacyData;
+      const mergedData = mergePluginDataWithFallback(currentRawData, legacyData);
+      if (JSON.stringify(mergedData) !== JSON.stringify(currentData)) {
+        this.pluginData = mergedData;
+        await this.persistPluginData();
+        console.info(`Migrated plugin data from ${LEGACY_PLUGIN_ID} to ${this.manifest.id}.`);
+      }
+      return mergedData;
     }
 
-    return mergePluginData(currentData);
-  }
-
-  private hasStoredPluginData(raw: unknown): raw is Record<string, unknown> {
-    return !!raw && typeof raw === 'object' && Object.keys(raw as Record<string, unknown>).length > 0;
+    return currentData;
   }
 
   private async loadLegacyPluginData(): Promise<PluginData | null> {

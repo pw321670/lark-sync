@@ -26,7 +26,7 @@ export class NotificationManager {
   }
 
   syncStarted(): Notice {
-    return this.info('Starting sync to Feishu...', 3000);
+    return this.info('Starting Lark Sync...', 3000);
   }
 
   syncCompleted(summary: SyncSummary): Notice {

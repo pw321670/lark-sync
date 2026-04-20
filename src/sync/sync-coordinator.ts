@@ -1,4 +1,4 @@
-import type { FileEntry, SyncConfig, SyncResult } from './types';
+import type { FileEntry, FileState, SyncConfig, SyncResult } from './types';
 import { FeishuClient } from './feishu-client';
 import { FeishuDocClient } from './feishu-doc-client';
 import { StateTracker, type StateStore } from './state-tracker';
@@ -101,7 +101,7 @@ export class SyncCoordinator {
     this.throwIfCancelled(run);
 
     const filtered = this.filterFiles(scannedFiles, config);
-    const changedFiles = this.detectChanges(filtered.validFiles);
+    const changedFiles = this.detectChanges(filtered.validFiles, config);
     this.throwIfCancelled(run);
 
     const folderMap = await this.createFolderStructure(changedFiles, client, config, run);
@@ -181,11 +181,27 @@ export class SyncCoordinator {
     return { validFiles, oversizedFiles, excludedCount };
   }
 
-  private detectChanges(files: FileEntry[]): FileEntry[] {
+  private detectChanges(files: FileEntry[], config: SyncConfig): FileEntry[] {
     return files.filter((file) => {
       const previous = this.stateTracker.getFileState(file.relPath);
-      return !previous || previous.size !== file.size || previous.mtimeMs !== file.mtimeMs;
+      if (!previous || previous.size !== file.size || previous.mtimeMs !== file.mtimeMs) {
+        return true;
+      }
+
+      return this.requiresDocumentStateRecovery(file.relPath, previous, config);
     });
+  }
+
+  private requiresDocumentStateRecovery(
+    relPath: string,
+    previous: FileState,
+    config: SyncConfig,
+  ): boolean {
+    if (config.markdownSyncMode !== 'document' || !this.isMarkdownFile(relPath)) {
+      return false;
+    }
+
+    return previous.remote?.type !== 'document' || !previous.remote.token;
   }
 
   private async createFolderStructure(
@@ -244,6 +260,10 @@ export class SyncCoordinator {
   private getLeafName(relPath: string): string {
     const parts = relPath.split('/');
     return parts[parts.length - 1] || '';
+  }
+
+  private isMarkdownFile(relPath: string): boolean {
+    return relPath.toLowerCase().endsWith('.md');
   }
 
   private throwIfCancelled(run: ActiveSync): void {

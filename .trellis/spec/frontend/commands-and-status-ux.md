@@ -21,11 +21,11 @@ The plugin currently turns the real runtime phases into Obsidian interactions in
 
 Current implemented commands and entrypoints:
 
-- `Start sync to Feishu`
-- `Cancel sync to Feishu`
-- `Open Feishu sync settings`
-- `Preview Feishu sync scope`
-- `Show Feishu sync status`
+- `Start Lark Sync`
+- `Cancel Lark Sync`
+- `Open Lark Sync settings`
+- `Preview Lark Sync scope`
+- `Show Lark Sync status`
 
 Authorization is handled through the settings UI with an authorize action, not through a separate command.
 
@@ -34,7 +34,7 @@ Authorization is handled through the settings UI with an authorize action, not t
 ## Command Execution Rules
 
 - Commands must validate required settings before side effects.
-- `Start sync to Feishu` must refuse to start if another sync is already running.
+- `Start Lark Sync` must refuse to start if another sync is already running.
 - If `refreshToken` is missing or invalid, the sync command should route the user toward reauthorization.
 - Do not start sync automatically on plugin load.
 - Only expose controls that really exist in the runtime. The current plugin supports cancel, not pause/resume.
@@ -54,6 +54,7 @@ Use for concise moments:
 - sync failed
 
 Keep notices short and actionable.
+Use the current plugin product name in sync notices and command labels so rename work does not leave mixed old/new wording in the UI.
 
 ### Persistent Runtime Status
 

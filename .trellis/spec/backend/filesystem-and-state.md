@@ -89,6 +89,7 @@ A file is treated as unchanged only when all of the following are true:
 - a previous state entry exists for `state[relPath]`
 - `prev.size === file.size`
 - `prev.mtimeMs === file.mtimeMs`
+- if `markdownSyncMode === "document"` and the path is Markdown, `prev.remote.token` is still present and valid enough to act as the durable remote identity
 
 If those checks pass, the file is skipped without any remote API calls.
 
@@ -120,6 +121,7 @@ These limitations are part of the current runtime behavior and must be changed d
 - Re-run sync without changing a file and verify it is skipped based on `size` and `mtimeMs`.
 - Modify a file and verify its state entry receives a new `uploadedAt`.
 - In document mode, modify a Markdown file and verify its persisted `remote.token` stays stable while content updates in place remotely.
+- In document mode, delete the persisted `remote` object for one unchanged Markdown file and verify the next sync does not skip it; it should recover or recreate the remote doc identity and write `remote.token` back.
 - Reload the plugin and verify unchanged files are still skipped because persisted state is reloaded correctly.
 
 ## Scenario: Persisted Remote Identity For Markdown Documents
@@ -153,7 +155,7 @@ These limitations are part of the current runtime behavior and must be changed d
 
 | Case | Expected behavior |
 |------|-------------------|
-| Old state entry has no `remote` | allow sync and fall back to recovery/create logic |
+| Old state entry has no `remote` | do not skip the file; allow sync and fall back to recovery/create logic |
 | `remote.type !== "document"` | ignore persisted remote identity for document updates |
 | `remote.token` missing or empty | treat as no remote identity |
 | Document upload fails after remote lookup | do not write a fresh state entry |
@@ -169,6 +171,7 @@ These limitations are part of the current runtime behavior and must be changed d
 ### 6. Tests Required
 
 - Sync one Markdown file in document mode, reload the plugin, modify the same file, sync again, and assert the remote doc URL stays stable.
+- Delete `remote` from an unchanged Markdown state entry, sync again, and assert the file is reprocessed instead of skipped.
 - Delete the persisted `remote` field from plugin data, sync again, and assert recovery or create still succeeds.
 - Force a document upload failure and assert the previous state entry is not replaced with partial remote metadata.
 

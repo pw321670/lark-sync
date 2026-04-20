@@ -286,6 +286,11 @@ export class UploadManager {
       });
     }
 
+    // If this note was previously uploaded as a raw .md file, remove that stale
+    // remote file after the online document path succeeds so the folder converges
+    // back to one representation per local Markdown file.
+    await this.deleteExistingFiles(parentFolderToken, fileName);
+
     return {
       bytesUploaded: file.size,
       remote: remoteRef,

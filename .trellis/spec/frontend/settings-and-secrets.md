@@ -39,6 +39,7 @@ The plugin stores settings and auth in local plugin data, not in repository file
 | `refreshToken` | Derived runtime secret | Do not ask the user to type it in the standard flow |
 | `exclude` | User-managed path list | Multiline list or repeated rows using normalized slash-separated relative paths |
 | `maxDirectUploadMB` | Required sync threshold | Numeric field with minimum validation and clear help text |
+| `markdownSyncMode` | User-managed Markdown representation setting | Default to document mode (`Create as online documents`), but allow switching back to regular file upload |
 
 Sync state is not a user setting. It represents bookkeeping and should stay outside the main settings form.
 
@@ -55,6 +56,7 @@ Examples:
 - Feishu root folder token
 - include/exclude mode and path list
 - upload size threshold
+- markdown sync representation mode
 - retry/concurrency settings
 - redirect URI if the implementation keeps it configurable
 
