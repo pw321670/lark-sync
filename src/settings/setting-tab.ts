@@ -1,6 +1,6 @@
 import { App, PluginSettingTab } from 'obsidian';
 
-import type SyncObsidianFeishuPlugin from '../main';
+import type LarkSyncPlugin from '../main';
 import {
   renderAdvancedSection,
   renderFeishuAppSection,
@@ -8,10 +8,10 @@ import {
   renderSyncStrategySection,
 } from './sections';
 
-export class FeishuSyncSettingTab extends PluginSettingTab {
+export class LarkSyncSettingTab extends PluginSettingTab {
   private testConnectionButton?: HTMLButtonElement;
 
-  constructor(app: App, private readonly plugin: SyncObsidianFeishuPlugin) {
+  constructor(app: App, private readonly plugin: LarkSyncPlugin) {
     super(app, plugin);
   }
 
@@ -20,8 +20,8 @@ export class FeishuSyncSettingTab extends PluginSettingTab {
     const pluginData = this.plugin.getPluginData();
 
     containerEl.empty();
-    containerEl.addClass('sync-obsidian-feishu-settings');
-    containerEl.createEl('h2', { text: 'Sync Obsidian to Feishu' });
+    containerEl.addClass('lark-sync-settings');
+    containerEl.createEl('h2', { text: 'Lark Sync' });
     containerEl.createEl('p', {
       cls: 'setting-item-description',
       text: 'Configure Feishu auth, sync scope, and operational defaults for this vault.',

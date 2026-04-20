@@ -1,7 +1,7 @@
 {
-  "name": "sync-obsidian-feishu",
+  "name": "lark-sync",
   "version": "0.1.0",
-  "description": "Obsidian plugin scaffold for syncing vault content to Feishu",
+  "description": "Desktop-first Obsidian plugin for syncing vault content to Lark",
   "main": "main.js",
   "type": "module",
   "scripts": {
@@ -11,6 +11,7 @@
     "vault:status": "powershell -ExecutionPolicy Bypass -File ./scripts/dev/status-plugin.ps1"
   },
   "keywords": [
+    "lark",
     "obsidian",
     "plugin",
     "feishu"

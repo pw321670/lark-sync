@@ -1,1 +1,1 @@
-export { FeishuSyncSettingTab } from './settings/setting-tab';
+export { LarkSyncSettingTab } from './settings/setting-tab';

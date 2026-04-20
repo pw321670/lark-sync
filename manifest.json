@@ -1,9 +1,9 @@
 {
-  "id": "sync-obsidian-feishu",
-  "name": "Sync Obsidian to Feishu",
+  "id": "lark-sync",
+  "name": "Lark Sync",
   "version": "0.1.0",
   "minAppVersion": "0.15.0",
-  "description": "Scaffold for a desktop-first Obsidian plugin that syncs vault content to Feishu.",
+  "description": "Desktop-first Obsidian plugin that syncs vault content to Lark and Feishu.",
   "author": "ph",
   "isDesktopOnly": true
 }

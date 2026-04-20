@@ -1,7 +1,7 @@
 import { Notice, Plugin } from 'obsidian';
 
 import { FeishuOAuth, AuthStorage, type OAuthResult } from './oauth';
-import { FeishuSyncSettingTab } from './settings';
+import { LarkSyncSettingTab } from './settings';
 import {
   SyncCoordinator,
   SyncCancelledError,
@@ -22,7 +22,9 @@ import {
 import { normalizeExcludeEntries } from './utils/path-utils';
 import { buildSyncPreview } from './utils/preview';
 
-export default class SyncObsidianFeishuPlugin extends Plugin {
+const LEGACY_PLUGIN_ID = 'sync-obsidian-feishu';
+
+export default class LarkSyncPlugin extends Plugin {
   private pluginData: PluginData = DEFAULT_PLUGIN_DATA;
   private oauth: FeishuOAuth | null = null;
   private syncButton: SyncButton | null = null;
@@ -30,14 +32,14 @@ export default class SyncObsidianFeishuPlugin extends Plugin {
   private syncCoordinator: SyncCoordinator | null = null;
 
   async onload(): Promise<void> {
-    this.pluginData = mergePluginData(await this.loadData());
+    this.pluginData = await this.loadPluginData();
 
     this.notificationManager = new NotificationManager();
     this.initOAuth();
     this.initSyncCoordinator();
     this.initUIComponents();
 
-    this.addSettingTab(new FeishuSyncSettingTab(this.app, this));
+    this.addSettingTab(new LarkSyncSettingTab(this.app, this));
     this.registerCommands();
   }
 
@@ -253,19 +255,19 @@ export default class SyncObsidianFeishuPlugin extends Plugin {
   private registerCommands(): void {
     this.addCommand({
       id: 'open-feishu-sync-settings',
-      name: 'Open Feishu sync settings',
+      name: 'Open Lark Sync settings',
       callback: () => this.openSettings(),
     });
 
     this.addCommand({
       id: 'preview-feishu-sync-scope',
-      name: 'Preview Feishu sync scope',
+      name: 'Preview Lark Sync scope',
       callback: async () => this.previewSyncScope(),
     });
 
     this.addCommand({
       id: 'show-last-feishu-sync-summary',
-      name: 'Show last Feishu sync summary',
+      name: 'Show last Lark Sync summary',
       callback: () => this.showLastSyncSummary(),
     });
   }
@@ -285,7 +287,7 @@ export default class SyncObsidianFeishuPlugin extends Plugin {
     }
 
     new Notice(
-      'Open Settings -> Community plugins -> Sync Obsidian to Feishu to edit plugin settings.',
+      'Open Settings -> Community plugins -> Lark Sync to edit plugin settings.',
     );
   }
 
@@ -341,7 +343,7 @@ export default class SyncObsidianFeishuPlugin extends Plugin {
   private showLastSyncSummary(): void {
     const summary = this.pluginData.lastSync;
     if (!summary) {
-      new Notice('No Feishu sync preview or run summary is available yet.');
+      new Notice('No Lark Sync preview or run summary is available yet.');
       return;
     }
 
@@ -358,6 +360,46 @@ export default class SyncObsidianFeishuPlugin extends Plugin {
 
   private async persistPluginData(): Promise<void> {
     await this.saveData(this.pluginData);
+  }
+
+  private async loadPluginData(): Promise<PluginData> {
+    const currentData = await this.loadData();
+    if (this.hasStoredPluginData(currentData)) {
+      return mergePluginData(currentData);
+    }
+
+    const legacyData = await this.loadLegacyPluginData();
+    if (legacyData) {
+      this.pluginData = legacyData;
+      await this.persistPluginData();
+      console.info(`Migrated plugin data from ${LEGACY_PLUGIN_ID} to ${this.manifest.id}.`);
+      return legacyData;
+    }
+
+    return mergePluginData(currentData);
+  }
+
+  private hasStoredPluginData(raw: unknown): raw is Record<string, unknown> {
+    return !!raw && typeof raw === 'object' && Object.keys(raw as Record<string, unknown>).length > 0;
+  }
+
+  private async loadLegacyPluginData(): Promise<PluginData | null> {
+    if (this.manifest.id === LEGACY_PLUGIN_ID) {
+      return null;
+    }
+
+    const legacyDataPath = `${this.app.vault.configDir}/plugins/${LEGACY_PLUGIN_ID}/data.json`;
+    if (!(await this.app.vault.adapter.exists(legacyDataPath))) {
+      return null;
+    }
+
+    try {
+      const raw = await this.app.vault.adapter.read(legacyDataPath);
+      return mergePluginData(JSON.parse(raw));
+    } catch (error) {
+      console.warn(`Failed to read legacy plugin data from ${legacyDataPath}:`, error);
+      return null;
+    }
   }
 
   private async storeSyncSummary(result: SyncResult): Promise<void> {

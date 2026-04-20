@@ -13,7 +13,7 @@ export interface SyncCommandHandlers {
   showStatus?: () => void;
 }
 
-const iconName = 'sync-obsidian-feishu';
+const iconName = 'lark-sync';
 const iconSvg = `
   <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
     <path d="M20 38c0-13 11-24 24-24 7 0 14 3 18 8l5-5v18H49l7-7a17 17 0 0 0-12-5c-9 0-17 7-17 15z" fill="currentColor"/>
@@ -32,31 +32,31 @@ export class SyncButton {
     addIcon(iconName, iconSvg);
     this.ribbonIconEl = this.plugin.addRibbonIcon(
       iconName,
-      'Start sync to Feishu',
+      'Start Lark Sync',
       () => this.options.onClick(),
     );
     this.setIdle();
   }
 
   setIdle(): void {
-    this.setState('idle', 'Start sync to Feishu');
+    this.setState('idle', 'Start Lark Sync');
   }
 
   setSyncing(): void {
-    this.setState('syncing', 'Syncing to Feishu...');
+    this.setState('syncing', 'Lark Sync in progress...');
   }
 
   setSuccess(): void {
-    this.setState('success', 'Sync completed');
+    this.setState('success', 'Lark Sync completed');
     this.scheduleReset();
   }
 
   setError(): void {
-    this.setState('error', 'Sync failed');
+    this.setState('error', 'Lark Sync failed');
   }
 
   setWarning(): void {
-    this.setState('warning', 'Sync needs attention');
+    this.setState('warning', 'Lark Sync needs attention');
   }
 
   destroy(): void {
@@ -69,13 +69,13 @@ export class SyncButton {
   private setState(status: SyncButtonStatus, tooltip: string): void {
     this.ribbonIconEl.setAttribute('aria-label', tooltip);
     this.ribbonIconEl.removeClass(
-      'sync-obsidian-feishu-idle',
-      'sync-obsidian-feishu-syncing',
-      'sync-obsidian-feishu-success',
-      'sync-obsidian-feishu-error',
-      'sync-obsidian-feishu-warning',
+      'lark-sync-idle',
+      'lark-sync-syncing',
+      'lark-sync-success',
+      'lark-sync-error',
+      'lark-sync-warning',
     );
-    this.ribbonIconEl.addClass(`sync-obsidian-feishu-${status}`);
+    this.ribbonIconEl.addClass(`lark-sync-${status}`);
   }
 
   private scheduleReset(): void {
@@ -97,7 +97,7 @@ export function registerSyncCommands(
   if (handlers.startSync) {
     plugin.addCommand({
       id: 'feishu-sync-start',
-      name: 'Start sync to Feishu',
+      name: 'Start Lark Sync',
       callback: handlers.startSync,
     });
   }
@@ -113,7 +113,7 @@ export function registerSyncCommands(
   if (handlers.openSettings) {
     plugin.addCommand({
       id: 'feishu-sync-settings',
-      name: 'Open Feishu sync settings',
+      name: 'Open Lark Sync settings',
       callback: handlers.openSettings,
     });
   }
@@ -121,7 +121,7 @@ export function registerSyncCommands(
   if (handlers.showStatus) {
     plugin.addCommand({
       id: 'feishu-sync-status',
-      name: 'Show Feishu sync status',
+      name: 'Show Lark Sync status',
       callback: handlers.showStatus,
     });
   }

@@ -1,6 +1,6 @@
 import { Setting } from 'obsidian';
 
-import type SyncObsidianFeishuPlugin from '../main';
+import type LarkSyncPlugin from '../main';
 import type { FeishuAuthState, FeishuSyncConfig, LogLevel, PluginData, SyncMode } from '../utils/contracts';
 import { DEFAULT_REDIRECT_URI } from '../utils/contracts';
 import { formatExcludeEntries, normalizeExcludeEntries } from '../utils/path-utils';
@@ -8,7 +8,7 @@ import { testConnection } from './actions';
 import { addDivider, addSecretSetting, addTextSetting, formatTimestamp, renderHint } from './helpers';
 
 interface SettingsSectionContext {
-  plugin: SyncObsidianFeishuPlugin;
+  plugin: LarkSyncPlugin;
   containerEl: HTMLElement;
   config: FeishuSyncConfig;
   auth: FeishuAuthState;

@@ -1,6 +1,6 @@
 import { Notice } from 'obsidian';
 
-import type SyncObsidianFeishuPlugin from '../main';
+import type LarkSyncPlugin from '../main';
 import { validateConfig } from '../utils/contracts';
 
 function setButtonState(button: HTMLButtonElement | undefined, disabled: boolean, label: string): string {
@@ -24,7 +24,7 @@ function restoreButtonState(button: HTMLButtonElement | undefined, originalLabel
 }
 
 export async function testConnection(
-  plugin: SyncObsidianFeishuPlugin,
+  plugin: LarkSyncPlugin,
   button?: HTMLButtonElement,
 ): Promise<void> {
   const originalLabel = setButtonState(button, true, 'Checking...');
