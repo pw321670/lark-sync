@@ -1,7 +1,7 @@
 # Set up local vault development architecture
 
 ## Goal
-Turn the repository into a smoother local-development setup for an Obsidian plugin that is tested against the user's vault at `D:\OneDrive\test`.
+Turn the repository into a smoother local-development setup for an Obsidian plugin that is tested against the user's vault at `<vault-path>`.
 
 ## Requirements
 - Verify the current repository path and test vault path
@@ -14,10 +14,10 @@ Turn the repository into a smoother local-development setup for an Obsidian plug
 ## Acceptance Criteria
 - [ ] The repository has helper scripts for local vault linking/status
 - [ ] The README documents the recommended local dev flow for this project
-- [ ] `D:\OneDrive\test\.obsidian\plugins\sync-obsidian-feishu` exists and points at the repository
+- [ ] `<vault-path>/.obsidian/plugins/sync-obsidian-feishu` exists and points at the repository
 - [ ] The setup preserves the current plugin scaffold and build process
 
 ## Technical Notes
-- Repository path: `D:\projects\sync-obsidian-feishu`
-- Test vault path: `D:\OneDrive\test`
+- Repository path: `<repo-path>`
+- Test vault path: `<vault-path>`
 - Plugin id: `sync-obsidian-feishu`

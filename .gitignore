@@ -1,20 +1,27 @@
-config.json
-state.json
-data.json
-node_modules/
-*.log
-dev-vault.json
-main.js
-*.js.map
-.obsidian/
+# Build output (main.js is tracked for BRAT distribution)
+main.js.map
 
-# 测试文件和配置
+# Runtime data
+data.json
+state.json
+
+# Local dev
+node_modules/
+config.json
+dev-vault.json
+.obsidian/
+*.log
+
+# AI development tools
+.claude/
+.agents/
+.codex/
+
+# Test files with potential secrets
 test/scripts/*.{sh,cjs}
 test/fixtures/*.json
 !test/**/*.template.*
 !test/**/*.md
-
-# 临时测试文件（包含敏感信息）
 test-api-call.sh
 test-api-request.json
 test-feishu-api.cjs

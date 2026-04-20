@@ -4,6 +4,6 @@
   "version": "0.1.0",
   "minAppVersion": "0.15.0",
   "description": "Desktop-first Obsidian plugin that syncs vault content to Lark and Feishu.",
-  "author": "ph",
+  "author": "pw321670",
   "isDesktopOnly": true
 }

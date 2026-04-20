@@ -17,8 +17,8 @@
     "优化了用户体验（Authorize按钮、权限状态显示）"
   ],
   "testResults": [
-    "成功创建测试文档：adf.md (PnEZdiNL9o1qRExIdO6c9TYYnYe)",
-    "成功创建测试文档：inbox.md (NYxRdgHProFSIJxr8dmcdqjwn3c)",
+    "成功创建测试文档：adf.md (YOUR_DOC_ID)",
+    "成功创建测试文档：inbox.md (YOUR_DOC_ID)",
     "内容块添加功能正常",
     "文件夹位置功能正常"
   ],

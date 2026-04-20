@@ -16,6 +16,7 @@
     "plugin",
     "feishu"
   ],
+  "author": "pw321670",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^24.7.2",

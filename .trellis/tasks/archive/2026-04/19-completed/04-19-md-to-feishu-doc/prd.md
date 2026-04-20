@@ -212,8 +212,8 @@ markdownSyncMode: 'file' // 保持原有行为，避免影响现有用户
 5. **测试验证**
    - API 功能测试通过
    - 成功创建测试文档:
-     - [adf.md](https://www.feishu.cn/docx/PnEZdiNL9o1qRExIdO6c9TYYnYe)
-     - [inbox.md](https://www.feishu.cn/docx/NYxRdgHProFSIJxr8dmcdqjwn3c)
+     - [adf.md](https://www.feishu.cn/docx/YOUR_DOC_ID)
+     - [inbox.md](https://www.feishu.cn/docx/YOUR_DOC_ID)
    - 编译无错误
 
 ### 关键技术突破
