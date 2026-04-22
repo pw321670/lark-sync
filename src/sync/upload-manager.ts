@@ -193,14 +193,6 @@ export class UploadManager {
   ): Promise<UploadOperationResult> {
     const fileName = this.getFileName(file.relPath);
 
-    console.log('[UploadManager] 准备上传文件:', {
-      relPath: file.relPath,
-      fileName,
-      size: file.size,
-      parentFolderToken,
-      mtimeMs: file.mtimeMs,
-    });
-
     try {
       if (
         this.isMarkdownFile(fileName) &&
@@ -227,29 +219,18 @@ export class UploadManager {
     fileName: string,
     previousState?: FileState,
   ): Promise<UploadOperationResult> {
-    console.log('[UploadManager] 检测到 Markdown 文件，准备同步为在线文档:', fileName);
-
+    const feishuDocClient = this.requireDocClient();
     const fileContent = await this.fileReader.readFileContent(file.relPath);
     const markdownText = new TextDecoder().decode(fileContent);
     const docTitle = fileName.replace(/\.md$/i, '') || '未命名文档';
-
-    console.log('[UploadManager] Markdown 内容读取成功:', {
-      fileName,
-      contentLength: markdownText.length,
-      originalSize: file.size,
-    });
 
     const previousToken = this.getStoredDocumentToken(previousState);
     let remoteRef: RemoteFileRef | undefined;
 
     if (previousToken) {
       try {
-        await this.feishuDocClient!.updateDocument(previousToken, markdownText);
+        await feishuDocClient.updateDocument(previousToken, markdownText);
         remoteRef = this.buildDocumentRef(previousToken, docTitle, parentFolderToken);
-        console.log('[UploadManager] 使用已记录 docId 原位更新成功:', {
-          relPath: file.relPath,
-          docId: previousToken,
-        });
       } catch (error) {
         if (!this.isMissingDocumentError(error)) {
           throw error;
@@ -265,25 +246,16 @@ export class UploadManager {
     if (!remoteRef) {
       const recoveredToken = await this.recoverExistingDocumentToken(parentFolderToken, docTitle);
       if (recoveredToken) {
-        await this.feishuDocClient!.updateDocument(recoveredToken, markdownText);
+        await feishuDocClient.updateDocument(recoveredToken, markdownText);
         remoteRef = this.buildDocumentRef(recoveredToken, docTitle, parentFolderToken);
-        console.log('[UploadManager] 通过同目录同标题恢复到已有文档:', {
-          relPath: file.relPath,
-          docId: recoveredToken,
-        });
       }
     }
 
     if (!remoteRef) {
-      const created = await this.feishuDocClient!.createDocument(docTitle, markdownText, {
+      const created = await feishuDocClient.createDocument(docTitle, markdownText, {
         parentFolderToken,
       });
       remoteRef = this.buildDocumentRef(created.docId, docTitle, parentFolderToken, created.docUrl);
-      console.log('[UploadManager] 在线文档创建成功:', {
-        fileName,
-        docId: created.docId,
-        docUrl: created.docUrl,
-      });
     }
 
     // If this note was previously uploaded as a raw .md file, remove that stale
@@ -304,17 +276,8 @@ export class UploadManager {
   ): Promise<UploadOperationResult> {
     const fileContent = await this.fileReader.readFileContent(file.relPath);
 
-    console.log('[UploadManager] 文件内容读取成功:', {
-      fileName,
-      contentSize: fileContent.byteLength,
-      expectedSize: file.size,
-      sizeMatch: fileContent.byteLength === file.size,
-    });
-
     await this.deleteExistingFiles(parentFolderToken, fileName);
     await this.feishuClient.uploadSmallFile(parentFolderToken, fileName, fileContent, file.size);
-
-    console.log('[UploadManager] 文件上传成功:', fileName);
     return {
       bytesUploaded: file.size,
     };
@@ -324,6 +287,7 @@ export class UploadManager {
     parentFolderToken: string,
     docTitle: string,
   ): Promise<string | undefined> {
+    const feishuDocClient = this.requireDocClient();
     const existingItems = await this.feishuClient.findExistingItems(parentFolderToken, docTitle);
     const documentTokens: string[] = [];
 
@@ -332,7 +296,7 @@ export class UploadManager {
         continue;
       }
 
-      if (await this.feishuDocClient!.documentExists(existingItem.token)) {
+      if (await feishuDocClient.documentExists(existingItem.token)) {
         documentTokens.push(existingItem.token);
       }
     }
@@ -356,6 +320,14 @@ export class UploadManager {
     }
 
     return previousState.remote.token;
+  }
+
+  private requireDocClient(): FeishuDocClient {
+    if (!this.feishuDocClient) {
+      throw new Error('Feishu document client is unavailable');
+    }
+
+    return this.feishuDocClient;
   }
 
   private buildDocumentRef(

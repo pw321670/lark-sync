@@ -149,13 +149,6 @@ export class FeishuClient {
     );
 
     // 🔍 调试信息：上传前记录详细信息（方便后续删除）
-    console.log('[Feishu Upload] 准备上传文件:', {
-      fileName,
-      fileSize,
-      parentFolderToken,
-      contentType
-    });
-
     try {
       const response = await this.fetchWithRetry<UploadFileResponse>(
         `${this.baseURL}/drive/v1/files/upload_all`,
@@ -175,7 +168,6 @@ export class FeishuClient {
         throw new Error(`Upload response missing file token: ${JSON.stringify(response)}`);
       }
 
-      console.log('[Feishu Upload] 上传成功:', { fileName, token });
       return token;
     } catch (error) {
       console.error('[Feishu Upload] 上传失败:', {
@@ -198,16 +190,6 @@ export class FeishuClient {
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
         // 🔍 调试信息：记录请求详情（仅在上传失败时）
-        if (url.includes('upload_all') && attempt > 1) {
-          console.log('[Feishu API] 重试上传请求:', {
-            attempt,
-            url,
-            method: init?.method,
-            contentType: init?.contentType,
-            bodySize: init?.body instanceof ArrayBuffer ? init.body.byteLength : 'unknown'
-          });
-        }
-
         const response = await requestUrl({
           url,
           method: init?.method || 'GET',
@@ -261,12 +243,6 @@ export class FeishuClient {
     const chunks: Uint8Array[] = [];
 
     // 🔍 调试信息：记录 multipart 构建过程（方便后续删除）
-    console.log('[Multipart Build] 开始构建 multipart body:', {
-      fileName,
-      fieldCount: Object.keys(fields).length,
-      fileSize: fileContent.byteLength
-    });
-
     // 添加表单字段
     for (const [name, value] of Object.entries(fields)) {
       const chunk = encoder.encode(
@@ -275,7 +251,6 @@ export class FeishuClient {
         `${value}\r\n`
       );
       chunks.push(chunk);
-      console.log('[Multipart Build] 添加字段:', name, '=', value);
     }
 
     // 添加文件字段 - 转义文件名中的特殊字符以防止 multipart 注入
@@ -287,13 +262,6 @@ export class FeishuClient {
       `Content-Disposition: form-data; name="file"; filename="${safeFileName}"\r\n` +
       `Content-Type: application/octet-stream\r\n\r\n`
     );
-
-    console.log('[Multipart Build] 添加文件字段:', {
-      name: 'file',
-      originalFileName: fileName,
-      safeFileName: safeFileName,
-      fileNameChanged: fileName !== safeFileName
-    });
 
     chunks.push(fileHeader);
     chunks.push(new Uint8Array(fileContent));
@@ -308,12 +276,6 @@ export class FeishuClient {
       merged.set(chunk, offset);
       offset += chunk.byteLength;
     }
-
-    console.log('[Multipart Build] multipart body 构建完成:', {
-      totalSize: totalLength,
-      chunkCount: chunks.length,
-      boundary
-    });
 
     return {
       body: merged.buffer,

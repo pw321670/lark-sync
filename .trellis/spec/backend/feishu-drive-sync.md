@@ -22,8 +22,8 @@ This document defines the current remote sync algorithm and Feishu Drive / Feish
 | Get doc metadata | Feishu DocX document get | `FeishuDocClient.updateDocument()` / document recovery |
 | List child blocks | Feishu DocX children list | `FeishuDocClient.updateDocument()` |
 | Delete child blocks | Feishu DocX batch delete | `FeishuDocClient.updateDocument()` |
-| Create online doc | Feishu DocX create / block APIs | `UploadManager.uploadAsDocument()` through `FeishuDocClient` |
-| Update online doc in place | Feishu DocX get / delete children / create block APIs | `UploadManager.uploadAsDocument()` through `FeishuDocClient.updateDocument()` |
+| Create online doc | Feishu DocX create / children / descendant block APIs | `UploadManager.uploadAsDocument()` through `FeishuDocClient` |
+| Update online doc in place | Feishu DocX get / delete children / children / descendant block APIs | `UploadManager.uploadAsDocument()` through `FeishuDocClient.updateDocument()` |
 
 The runtime treats `data.code === 0` as success and surfaces errors otherwise.
 
@@ -136,6 +136,7 @@ These are current plugin-runtime behaviors and should not be described as a lega
 - Reload the plugin and verify a later Markdown edit still updates the same remote doc rather than creating a duplicate.
 - Delete `remote.token` from one unchanged Markdown state entry and verify the next document-mode sync repairs it instead of skipping the file.
 - Seed a stale `Note.md` regular file beside the online doc and verify the next successful document-mode sync removes the stale regular file.
+- Sync a standard Markdown table and verify Feishu renders a real table block whose cells still show content for empty and non-empty cells.
 - Verify configured upload retries and concurrent upload limits behave as expected.
 
 ## Scenario: Markdown To Feishu Online Documents
@@ -166,7 +167,16 @@ export class FeishuDocClient {
 - Feishu block payloads must use numeric `block_type` values and snake_case field names
 - Heading payload keys must use semantic names such as `heading1`, `heading2`, `heading3`
 - Do not use the numeric `block_type` value itself as the payload object key
-- Block type constants must follow the current official DocX contract (`Code = 14`, `Quote = 15`, `Todo = 17`, `Divider = 22`)
+- Text elements must use the official oneof-style payload such as `{ text_run: { ... } }`; do not send a legacy `type: 'text_run'` discriminator.
+- Inline rich-text styles belong under `text_run.text_element_style`, not `text_run.style`.
+- Code block language remains a top-level `code.language` field on the block payload, paired with `code.wrap` and `code.elements`.
+- Current runtime behavior keeps Markdown fenced code blocks as real DocX code blocks but intentionally sends `code.language = 1` (`PlainText`) for stability instead of trying to infer per-language rendering.
+- Standard Markdown tables now take the nested DocX path: create `Table = 31` and `TableCell = 32` blocks through `POST /documents/:document_id/blocks/:block_id/descendant`.
+- Table blocks must keep both top-level `children` and `table.cells` aligned to the ordered list of table-cell block ids.
+- Table-cell blocks must carry `table_cell: {}` and at least one child block; the current runtime always creates one text child per cell, even when the Markdown cell is empty.
+- Table-cell text is intentionally plain text in Phase 2 first pass; cell content does not reuse the inline rich-text parser yet.
+- Invalid or unsupported table candidates must fall back to normal text-block parsing instead of sending a partial or guessed table schema.
+- Block type constants must follow the current official DocX contract (`Code = 14`, `Quote = 15`, `Todo = 17`, `Divider = 22`, `Table = 31`, `TableCell = 32`)
 - In-place document updates clear the root page children and recreate the Markdown-derived block list inside the same `document_id`
 
 ### 4. Validation & Error Matrix
@@ -177,6 +187,8 @@ export class FeishuDocClient {
 | Document create succeeds but block append fails | surface as sync failure, do not mark upload state as successful |
 | Stored `remote.token` points to a deleted doc | fall back to same-folder title recovery or fresh creation |
 | Stored `remote.token` is valid | update the existing remote doc in place and keep the same doc URL |
+| Markdown includes a standard table (`header + separator + rows`) | use the descendant-create path and render a real DocX table |
+| Markdown includes a malformed table candidate | do not send `Table`/`TableCell`; fall back to normal text blocks |
 | Non-Markdown file | stay on regular file-upload path |
 | `markdownSyncMode=file` | Markdown stays on regular file-upload path |
 
@@ -189,6 +201,11 @@ export class FeishuDocClient {
 ### 6. Tests Required
 
 - Create a document with text blocks, headings, lists, and code blocks.
+- Create a document whose Markdown includes bold, italic, highlight, inline code, and Obsidian wikilinks, then confirm the rendered blocks use `text_element_style`.
+- Create fenced code blocks with and without language labels and confirm they still render as code blocks, even though the current runtime intentionally displays them as `PlainText`.
+- Create a document whose Markdown includes a standard table and confirm the write path uses nested `Table` / `TableCell` blocks rather than plain text paragraphs.
+- Include an empty Markdown table cell and confirm the generated DocX payload still gives that cell one empty text child.
+- Include a malformed table candidate with pipe characters but no valid separator row and confirm it stays on the plain text path.
 - Modify the same Markdown file twice and confirm the second sync keeps the same `docId`.
 - Verify OAuth permission failures are surfaced as actionable sync errors.
 - Verify state is only updated after document creation succeeds.
@@ -211,7 +228,7 @@ export class FeishuDocClient {
 {
   block_type: 3,
   3: {
-    elements: [{ type: 'text_run', text_run: { content: 'Title' } }],
+    elements: [{ text_run: { content: 'Title' } }],
   },
 }
 ```
@@ -223,8 +240,7 @@ export class FeishuDocClient {
   block_type: 2,
   text: {
     elements: [{
-      type: 'text_run',
-      text_run: { content: 'text', style: {} },
+      text_run: { content: 'text' },
     }],
   },
 }
@@ -232,7 +248,20 @@ export class FeishuDocClient {
 {
   block_type: 3,
   heading1: {
-    elements: [{ type: 'text_run', text_run: { content: 'Title', style: {} } }],
+    elements: [{ text_run: { content: 'Title' } }],
+  },
+}
+
+{
+  block_type: 2,
+  text: {
+    elements: [{
+      text_run: {
+        content: 'Wiki',
+        text_element_style: { text_color: 5, bold: true },
+      },
+    }],
+    style: {},
   },
 }
 ```

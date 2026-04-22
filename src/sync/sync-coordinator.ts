@@ -272,9 +272,5 @@ export class SyncCoordinator {
     }
   }
 
-  private log(message: string): void {
-    if (this.options.verbose) {
-      console.log(`[SyncCoordinator] ${message}`);
-    }
-  }
+  private log(_message: string): void {}
 }

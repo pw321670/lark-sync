@@ -1,0 +1,5 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/backend/quality-and-safety.md", "reason": "Build/manual regression rules for sync-core changes"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Boundary checks for sync-state and Feishu payload flow"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Keep one markdown-to-doc conversion path"}

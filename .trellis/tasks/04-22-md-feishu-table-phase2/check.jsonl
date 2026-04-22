@@ -1,0 +1,4 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check.md", "reason": "Code quality check spec"}
+{"file": ".trellis/spec/backend/quality-and-safety.md", "reason": "Build/manual regression rules for DocX table changes"}
+{"file": ".trellis/spec/backend/feishu-drive-sync.md", "reason": "DocX table block and markdown-to-doc contract"}

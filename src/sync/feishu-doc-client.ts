@@ -15,14 +15,25 @@ enum BlockType {
   Quote = 15,
   Todo = 17,
   Divider = 22,
+  Table = 31,
+  TableCell = 32,
 }
 
 type TextElement = {
-  type: 'text_run';
   text_run: {
     content: string;
-    style: Record<string, unknown>;
+    text_element_style?: TextElementStyle;
   };
+};
+
+type TextElementStyle = {
+  bold?: boolean;
+  italic?: boolean;
+  strikethrough?: boolean;
+  underline?: boolean;
+  inline_code?: boolean;
+  background_color?: number;
+  text_color?: number;
 };
 
 type TextBlockContent = {
@@ -33,7 +44,20 @@ type TextBlockContent = {
   done?: boolean;
 };
 
-type DividerBlockContent = Record<string, never>;
+type EmptyBlockContent = Record<string, never>;
+
+type TableProperty = {
+  row_size: number;
+  column_size: number;
+  column_width?: number[];
+  header_row?: boolean;
+  header_column?: boolean;
+};
+
+type TableBlockContent = {
+  cells?: string[];
+  property: TableProperty;
+};
 
 type BlockContentKey =
   | 'text'
@@ -48,11 +72,15 @@ type BlockContentKey =
   | 'code'
   | 'quote'
   | 'todo'
-  | 'divider';
+  | 'divider'
+  | 'table'
+  | 'table_cell';
 
 type DocBlock = {
   block_type: number;
-} & Partial<Record<BlockContentKey, TextBlockContent | DividerBlockContent>>;
+  block_id?: string;
+  children?: string[];
+} & Partial<Record<BlockContentKey, TextBlockContent | EmptyBlockContent | TableBlockContent>>;
 
 interface ApiEnvelope<T> {
   code: number;
@@ -109,6 +137,12 @@ interface CreateBlockRequest {
   index?: number;
 }
 
+interface CreateDescendantBlockRequest {
+  children_id: string[];
+  descendants: DocBlock[];
+  index?: number;
+}
+
 interface DeleteBlockChildrenRequest {
   start_index: number;
   end_index: number;
@@ -127,6 +161,35 @@ export interface UpdateDocumentOptions {
   parentBlockId?: string;
 }
 
+type BlockAppendOperation =
+  | {
+      kind: 'children';
+      blocks: DocBlock[];
+    }
+  | {
+      kind: 'descendant';
+      childrenIds: string[];
+      descendants: DocBlock[];
+    };
+
+type InlineToken =
+  | {
+      kind: 'code';
+      content: string;
+      nextIndex: number;
+    }
+  | {
+      kind: 'wikilink';
+      displayText: string;
+      nextIndex: number;
+    }
+  | {
+      kind: 'styled';
+      content: string;
+      style: TextElementStyle;
+      nextIndex: number;
+    };
+
 export class FeishuDocClientError extends Error {
   constructor(
     message: string,
@@ -143,6 +206,12 @@ export class FeishuDocClientError extends Error {
 
 export class FeishuDocClient {
   private readonly baseUrl = 'https://open.feishu.cn/open-apis/docx/v1';
+  private readonly inlineHighlightColor = 3;
+  private readonly wikiLinkTextColor = 5;
+  private readonly plainTextCodeLanguage = 1;
+  private readonly defaultTableColumnWidth = 100;
+  private readonly maxBlocksPerCreateRequest = 50;
+  private readonly maxDescendantBlocksPerRequest = 1000;
 
   constructor(private readonly userAccessToken: string) {}
 
@@ -160,12 +229,6 @@ export class FeishuDocClient {
     markdownContent: string,
     options?: CreateDocumentOptions,
   ): Promise<CreateDocumentResult> {
-    console.log('[FeishuDocClient] 准备创建文档:', {
-      title,
-      contentLength: markdownContent.length,
-      parentFolderToken: options?.parentFolderToken,
-    });
-
     const docId = await this.createEmptyDocument(title, options?.parentFolderToken);
     await this.replaceDocumentContent(docId, markdownContent, {
       parentBlockId: docId,
@@ -227,11 +290,6 @@ export class FeishuDocClient {
       );
     }
 
-    console.log('[FeishuDocClient] 空文档创建成功:', {
-      docId,
-      title: data.document?.title,
-    });
-
     return docId;
   }
 
@@ -276,21 +334,27 @@ export class FeishuDocClient {
 
     if (existingChildren.length > 0) {
       await this.deleteChildRange(docId, parentBlockId, 0, existingChildren.length);
-      console.log('[FeishuDocClient] 已清空文档旧内容块:', {
-        docId,
-        removedChildren: existingChildren.length,
-      });
     }
 
-    const blocks = this.convertMarkdownToBlocks(markdownContent);
-    console.log('[FeishuDocClient] Markdown 转换完成，生成块数:', blocks.length);
+    const operations = this.convertMarkdownToOperations(markdownContent);
 
-    if (blocks.length === 0) {
+    if (operations.length === 0) {
       return;
     }
 
-    await this.addBlocksToDocument(docId, parentBlockId, blocks);
-    console.log('[FeishuDocClient] 内容块添加成功');
+    for (const operation of operations) {
+      if (operation.kind === 'children') {
+        await this.addBlocksToDocument(docId, parentBlockId, operation.blocks);
+        continue;
+      }
+
+      await this.addDescendantBlocksToDocument(
+        docId,
+        parentBlockId,
+        operation.childrenIds,
+        operation.descendants,
+      );
+    }
   }
 
   private async listChildBlocks(docId: string, parentId: string): Promise<ChildBlockItem[]> {
@@ -349,6 +413,7 @@ export class FeishuDocClient {
     docId: string,
     parentId: string,
     blocks: DocBlock[],
+    index = -1,
   ): Promise<void> {
     await this.requestApi<BlockMutationData>(
       {
@@ -356,10 +421,31 @@ export class FeishuDocClient {
         method: 'POST',
         body: JSON.stringify({
           children: blocks,
-          index: 0,
+          index,
         } satisfies CreateBlockRequest),
       },
       'Create document blocks',
+    );
+  }
+
+  private async addDescendantBlocksToDocument(
+    docId: string,
+    parentId: string,
+    childrenIds: string[],
+    descendants: DocBlock[],
+    index = -1,
+  ): Promise<void> {
+    await this.requestApi<BlockMutationData>(
+      {
+        url: `${this.baseUrl}/documents/${docId}/blocks/${parentId}/descendant`,
+        method: 'POST',
+        body: JSON.stringify({
+          children_id: childrenIds,
+          descendants,
+          index,
+        } satisfies CreateDescendantBlockRequest),
+      },
+      'Create descendant document blocks',
     );
   }
 
@@ -418,10 +504,30 @@ export class FeishuDocClient {
     );
   }
 
-  private convertMarkdownToBlocks(markdown: string): DocBlock[] {
-    const blocks: DocBlock[] = [];
+  private convertMarkdownToOperations(markdown: string): BlockAppendOperation[] {
+    const operations: BlockAppendOperation[] = [];
+    const pendingBlocks: DocBlock[] = [];
     const lines = markdown.split('\n');
     let index = 0;
+
+    const flushPendingBlocks = (): void => {
+      if (pendingBlocks.length === 0) {
+        return;
+      }
+
+      operations.push({
+        kind: 'children',
+        blocks: pendingBlocks.splice(0, pendingBlocks.length),
+      });
+    };
+
+    const pushPendingBlock = (block: DocBlock): void => {
+      pendingBlocks.push(block);
+
+      if (pendingBlocks.length >= this.maxBlocksPerCreateRequest) {
+        flushPendingBlocks();
+      }
+    };
 
     while (index < lines.length) {
       const currentLine = lines[index];
@@ -437,65 +543,73 @@ export class FeishuDocClient {
 
       if (trimmedLine.startsWith('```')) {
         const codeBlock = this.parseCodeBlock(lines, index);
-        blocks.push(codeBlock.block);
+        pushPendingBlock(codeBlock.block);
         index = codeBlock.nextIndex;
+        continue;
+      }
+
+      const tableBlock = this.parseMarkdownTable(lines, index);
+      if (tableBlock) {
+        flushPendingBlocks();
+        operations.push(tableBlock.operation);
+        index = tableBlock.nextIndex;
         continue;
       }
 
       if (trimmedLine.startsWith('#')) {
         const headingBlock = this.parseHeading(trimmedLine);
         if (headingBlock) {
-          blocks.push(headingBlock);
+          pushPendingBlock(headingBlock);
         }
         index += 1;
         continue;
       }
 
       if (trimmedLine.startsWith('>')) {
-        blocks.push(this.createQuoteBlock(trimmedLine.substring(1).trim()));
+        pushPendingBlock(this.createQuoteBlock(trimmedLine.substring(1).trim()));
         index += 1;
         continue;
       }
 
       const todoMatch = trimmedLine.match(/^- \[( |x|X)\]\s+(.+)$/);
       if (todoMatch) {
-        blocks.push(this.createTodoBlock(todoMatch[2]!, todoMatch[1]!.toLowerCase() === 'x'));
+        pushPendingBlock(this.createTodoBlock(todoMatch[2]!, todoMatch[1]!.toLowerCase() === 'x'));
         index += 1;
         continue;
       }
 
       if (trimmedLine.startsWith('- ') || trimmedLine.startsWith('* ')) {
-        blocks.push(this.createBulletBlock(trimmedLine.substring(2).trim()));
+        pushPendingBlock(this.createBulletBlock(trimmedLine.substring(2).trim()));
         index += 1;
         continue;
       }
 
       const orderedMatch = trimmedLine.match(/^\d+\.\s+(.+)$/);
       if (orderedMatch) {
-        blocks.push(this.createOrderedBlock(orderedMatch[1]!));
+        pushPendingBlock(this.createOrderedBlock(orderedMatch[1]!));
         index += 1;
         continue;
       }
 
       if (trimmedLine === '---' || trimmedLine === '***') {
-        blocks.push(this.createDividerBlock());
+        pushPendingBlock(this.createDividerBlock());
         index += 1;
         continue;
       }
 
-      blocks.push(this.createTextBlock(trimmedLine));
+      pushPendingBlock(this.createTextBlock(trimmedLine));
       index += 1;
     }
 
-    return blocks;
+    flushPendingBlocks();
+
+    return operations;
   }
 
   private parseCodeBlock(
     lines: string[],
     startIndex: number,
   ): { block: DocBlock; nextIndex: number } {
-    const firstLine = lines[startIndex];
-    const language = firstLine?.substring(3).trim() || 'plain_text';
     const codeLines: string[] = [];
 
     let index = startIndex + 1;
@@ -514,7 +628,7 @@ export class FeishuDocClient {
         block_type: BlockType.Code,
         code: {
           elements: [this.createTextRunElement(codeLines.join('\n'))],
-          language: this.toFeishuCodeLanguage(language),
+          language: this.plainTextCodeLanguage,
           wrap: false,
         },
       },
@@ -605,65 +719,411 @@ export class FeishuDocClient {
     };
   }
 
-  private createTextContent(text: string): TextBlockContent {
+  private createPlainTextContent(text: string): TextBlockContent {
     return {
       elements: [this.createTextRunElement(text)],
       style: {},
     };
   }
 
-  private createTextRunElement(text: string): TextElement {
+  private createTextContent(text: string): TextBlockContent {
+    const elements = this.parseInlineElements(text);
+
     return {
-      type: 'text_run',
+      elements: elements.length > 0 ? elements : [this.createTextRunElement(text)],
+      style: {},
+    };
+  }
+
+  private createTextRunElement(text: string, style: TextElementStyle = {}): TextElement {
+    const normalizedStyle = this.normalizeTextStyle(style);
+
+    return {
       text_run: {
         content: text,
-        style: {},
+        ...(normalizedStyle ? { text_element_style: normalizedStyle } : {}),
       },
     };
   }
 
-  private toFeishuCodeLanguage(language: string): number {
-    const normalized = language.trim().toLowerCase();
-    const map: Record<string, number> = {
-      bash: 7,
-      sh: 60,
-      shell: 60,
-      c: 10,
-      cpp: 9,
-      'c++': 9,
-      css: 12,
-      go: 22,
-      graphql: 71,
-      html: 24,
-      java: 29,
-      javascript: 30,
-      js: 30,
-      json: 28,
-      markdown: 39,
-      md: 39,
-      nginx: 40,
-      objectivec: 41,
-      php: 43,
-      plaintext: 1,
-      plain_text: 1,
-      powershell: 46,
-      proto: 48,
-      protobuf: 48,
-      python: 49,
-      py: 49,
-      rust: 53,
-      scss: 55,
-      sql: 56,
-      swift: 61,
-      toml: 75,
-      ts: 63,
-      typescript: 63,
-      xml: 66,
-      yaml: 67,
-      yml: 67,
-    };
+  private parseMarkdownTable(
+    lines: string[],
+    startIndex: number,
+  ): { operation: Extract<BlockAppendOperation, { kind: 'descendant' }>; nextIndex: number } | null {
+    const headerLine = lines[startIndex];
+    const separatorLine = lines[startIndex + 1];
 
-    return map[normalized] ?? 1;
+    if (!headerLine || !separatorLine) {
+      return null;
+    }
+
+    const headerCells = this.parseTableRow(headerLine);
+    const separatorCells = this.parseTableSeparatorRow(separatorLine);
+
+    if (!headerCells || !separatorCells || headerCells.length !== separatorCells.length) {
+      return null;
+    }
+
+    const rows: string[][] = [headerCells];
+    let nextIndex = startIndex + 2;
+
+    while (nextIndex < lines.length) {
+      const line = lines[nextIndex];
+      if (line === undefined || !line.trim()) {
+        break;
+      }
+
+      if (!line.includes('|')) {
+        break;
+      }
+
+      const rowCells = this.parseTableRow(line);
+      if (!rowCells || rowCells.length !== headerCells.length) {
+        return null;
+      }
+
+      rows.push(rowCells);
+      nextIndex += 1;
+    }
+
+    const operation = this.createTableAppendOperation(rows);
+    if (!operation) {
+      return null;
+    }
+
+    return {
+      operation,
+      nextIndex,
+    };
+  }
+
+  private parseTableRow(line: string): string[] | null {
+    const trimmedLine = line.trim();
+    if (!trimmedLine || !trimmedLine.includes('|')) {
+      return null;
+    }
+
+    const normalizedLine = trimmedLine.replace(/^\|/, '').replace(/\|$/, '');
+    const cells = normalizedLine.split('|').map((cell) => cell.trim());
+
+    return cells.length > 0 ? cells : null;
+  }
+
+  private parseTableSeparatorRow(line: string): string[] | null {
+    const cells = this.parseTableRow(line);
+    if (!cells) {
+      return null;
+    }
+
+    return cells.every((cell) => /^:?-{3,}:?$/.test(cell)) ? cells : null;
+  }
+
+  private createTableAppendOperation(
+    rows: string[][],
+  ): Extract<BlockAppendOperation, { kind: 'descendant' }> | null {
+    const rowSize = rows.length;
+    const columnSize = rows[0]?.length ?? 0;
+
+    if (rowSize === 0 || columnSize === 0) {
+      return null;
+    }
+
+    const cellCount = rowSize * columnSize;
+    const descendantCount = 1 + cellCount * 2;
+    if (columnSize > 100 || cellCount > 2000 || descendantCount > this.maxDescendantBlocksPerRequest) {
+      return null;
+    }
+
+    const tableBlockId = 'table_block';
+    const cellIds: string[] = [];
+    const descendants: DocBlock[] = [];
+
+    rows.forEach((row, rowIndex) => {
+      row.forEach((cellText, columnIndex) => {
+        const cellId = `table_cell_${rowIndex}_${columnIndex}`;
+        const textId = `${cellId}_text`;
+
+        cellIds.push(cellId);
+        descendants.push({
+          block_id: cellId,
+          block_type: BlockType.TableCell,
+          table_cell: {},
+          children: [textId],
+        });
+        descendants.push({
+          block_id: textId,
+          block_type: BlockType.Text,
+          text: this.createPlainTextContent(cellText),
+          children: [],
+        });
+      });
+    });
+
+    return {
+      kind: 'descendant',
+      childrenIds: [tableBlockId],
+      descendants: [
+        {
+          block_id: tableBlockId,
+          block_type: BlockType.Table,
+          table: {
+            cells: cellIds,
+            property: {
+              row_size: rowSize,
+              column_size: columnSize,
+              column_width: Array.from(
+                { length: columnSize },
+                () => this.defaultTableColumnWidth,
+              ),
+              header_row: true,
+            },
+          },
+          children: cellIds,
+        },
+        ...descendants,
+      ],
+    };
+  }
+
+  private parseInlineElements(
+    text: string,
+    inheritedStyle: TextElementStyle = {},
+  ): TextElement[] {
+    const elements: TextElement[] = [];
+    let plainTextStart = 0;
+    let cursor = 0;
+
+    while (cursor < text.length) {
+      const token = this.matchInlineToken(text, cursor);
+      if (!token) {
+        cursor += 1;
+        continue;
+      }
+
+      if (plainTextStart < cursor) {
+        this.pushTextElement(elements, text.slice(plainTextStart, cursor), inheritedStyle);
+      }
+
+      if (token.kind === 'code') {
+        this.pushTextElement(
+          elements,
+          token.content,
+          this.mergeTextStyle(inheritedStyle, { inline_code: true }),
+        );
+      } else if (token.kind === 'wikilink') {
+        this.pushTextElement(
+          elements,
+          token.displayText,
+          this.mergeTextStyle(inheritedStyle, { text_color: this.wikiLinkTextColor }),
+        );
+      } else {
+        elements.push(
+          ...this.parseInlineElements(
+            token.content,
+            this.mergeTextStyle(inheritedStyle, token.style),
+          ),
+        );
+      }
+
+      cursor = token.nextIndex;
+      plainTextStart = cursor;
+    }
+
+    if (plainTextStart < text.length) {
+      this.pushTextElement(elements, text.slice(plainTextStart), inheritedStyle);
+    }
+
+    if (elements.length === 0) {
+      this.pushTextElement(elements, text, inheritedStyle);
+    }
+
+    return elements;
+  }
+
+  private matchInlineToken(text: string, cursor: number): InlineToken | null {
+    return (
+      this.matchInlineCode(text, cursor) ||
+      this.matchWikiLink(text, cursor) ||
+      this.matchStyledToken(text, cursor, '**', { bold: true }) ||
+      this.matchStyledToken(text, cursor, '==', {
+        background_color: this.inlineHighlightColor,
+      }) ||
+      this.matchStyledToken(text, cursor, '*', { italic: true })
+    );
+  }
+
+  private matchInlineCode(text: string, cursor: number): InlineToken | null {
+    if (text[cursor] !== '`') {
+      return null;
+    }
+
+    const endIndex = text.indexOf('`', cursor + 1);
+    if (endIndex <= cursor + 1) {
+      return null;
+    }
+
+    return {
+      kind: 'code',
+      content: text.slice(cursor + 1, endIndex),
+      nextIndex: endIndex + 1,
+    };
+  }
+
+  private matchWikiLink(text: string, cursor: number): InlineToken | null {
+    if (!text.startsWith('[[', cursor)) {
+      return null;
+    }
+
+    const endIndex = text.indexOf(']]', cursor + 2);
+    if (endIndex === -1) {
+      return null;
+    }
+
+    const rawTarget = text.slice(cursor + 2, endIndex);
+    const pipeIndex = rawTarget.indexOf('|');
+    const displayText = pipeIndex === -1 ? rawTarget : rawTarget.slice(pipeIndex + 1);
+
+    if (!displayText) {
+      return null;
+    }
+
+    return {
+      kind: 'wikilink',
+      displayText,
+      nextIndex: endIndex + 2,
+    };
+  }
+
+  private matchStyledToken(
+    text: string,
+    cursor: number,
+    delimiter: '**' | '*' | '==',
+    style: TextElementStyle,
+  ): InlineToken | null {
+    if (!text.startsWith(delimiter, cursor)) {
+      return null;
+    }
+
+    const contentStart = cursor + delimiter.length;
+    if (contentStart >= text.length || /\s/.test(text[contentStart]!)) {
+      return null;
+    }
+
+    const endIndex = this.findClosingDelimiter(text, delimiter, contentStart);
+    if (endIndex <= contentStart) {
+      return null;
+    }
+
+    return {
+      kind: 'styled',
+      content: text.slice(contentStart, endIndex),
+      style,
+      nextIndex: endIndex + delimiter.length,
+    };
+  }
+
+  private findClosingDelimiter(
+    text: string,
+    delimiter: '**' | '*' | '==',
+    fromIndex: number,
+  ): number {
+    let searchIndex = fromIndex;
+
+    while (searchIndex < text.length) {
+      const matchIndex = text.indexOf(delimiter, searchIndex);
+      if (matchIndex === -1) {
+        return -1;
+      }
+
+      if (!this.isDelimiterBoundary(text, delimiter, matchIndex)) {
+        searchIndex = matchIndex + delimiter.length;
+        continue;
+      }
+
+      const previousChar = text[matchIndex - 1];
+      if (previousChar && !/\s/.test(previousChar)) {
+        return matchIndex;
+      }
+
+      searchIndex = matchIndex + delimiter.length;
+    }
+
+    return -1;
+  }
+
+  private isDelimiterBoundary(
+    text: string,
+    delimiter: '**' | '*' | '==',
+    matchIndex: number,
+  ): boolean {
+    const delimiterChar = delimiter[0];
+    const previousChar = text[matchIndex - 1];
+    const nextChar = text[matchIndex + delimiter.length];
+
+    if (delimiter === '*') {
+      return previousChar !== delimiterChar && nextChar !== delimiterChar;
+    }
+
+    if (delimiter === '**' || delimiter === '==') {
+      return previousChar !== delimiterChar && nextChar !== delimiterChar;
+    }
+
+    return true;
+  }
+
+  private pushTextElement(
+    elements: TextElement[],
+    content: string,
+    style: TextElementStyle = {},
+  ): void {
+    if (!content) {
+      return;
+    }
+
+    const normalizedStyle = this.normalizeTextStyle(style);
+    const lastElement = elements[elements.length - 1];
+
+    if (
+      lastElement &&
+      this.areTextStylesEqual(lastElement.text_run.text_element_style, normalizedStyle)
+    ) {
+      lastElement.text_run.content += content;
+      return;
+    }
+
+    elements.push(this.createTextRunElement(content, normalizedStyle ?? {}));
+  }
+
+  private mergeTextStyle(
+    baseStyle: TextElementStyle,
+    nextStyle: TextElementStyle,
+  ): TextElementStyle {
+    return {
+      ...baseStyle,
+      ...nextStyle,
+    };
+  }
+
+  private normalizeTextStyle(style: TextElementStyle): TextElementStyle | undefined {
+    const normalizedStyle = Object.fromEntries(
+      Object.entries(style).filter(([, value]) => value !== undefined),
+    ) as TextElementStyle;
+
+    return Object.keys(normalizedStyle).length > 0 ? normalizedStyle : undefined;
+  }
+
+  private areTextStylesEqual(left?: TextElementStyle, right?: TextElementStyle): boolean {
+    const styleKeys: Array<keyof TextElementStyle> = [
+      'bold',
+      'italic',
+      'strikethrough',
+      'underline',
+      'inline_code',
+      'background_color',
+      'text_color',
+    ];
+
+    return styleKeys.every((key) => left?.[key] === right?.[key]);
   }
 
   private buildDocumentUrl(docId: string): string {
