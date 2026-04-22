@@ -216,9 +216,11 @@ export class SyncCoordinator {
     const parentPaths = new Set<string>();
 
     for (const file of files) {
-      const parentPath = this.getParentPath(file.relPath);
-      if (parentPath) {
-        parentPaths.add(parentPath);
+      const parts = file.relPath.split('/');
+      parts.pop();
+      while (parts.length > 0) {
+        parentPaths.add(parts.join('/'));
+        parts.pop();
       }
     }
 
