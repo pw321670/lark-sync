@@ -1,5 +1,6 @@
 import { requestUrl } from 'obsidian';
 
+import type { RateLimiter } from './rate-limiter';
 import type { FeishuApiResponse, FeishuFileItem, UploadFileResponse } from './types';
 
 export interface FeishuClientConfig {
@@ -21,11 +22,13 @@ export class FeishuClient {
   private readonly baseURL: string;
   private readonly retryAttempts: number;
   private readonly retryDelay: number;
+  private readonly rateLimiter: RateLimiter | null;
 
-  constructor(private readonly config: FeishuClientConfig) {
+  constructor(private readonly config: FeishuClientConfig, rateLimiter?: RateLimiter) {
     this.baseURL = config.baseURL || 'https://open.feishu.cn/open-apis';
     this.retryAttempts = config.retryAttempts ?? 3;
     this.retryDelay = config.retryDelay ?? 1000;
+    this.rateLimiter = rateLimiter ?? null;
   }
 
   async listFolderItems(folderToken: string): Promise<FeishuFileItem[]> {
@@ -189,6 +192,10 @@ export class FeishuClient {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
+        if (this.rateLimiter) {
+          await this.rateLimiter.acquire();
+        }
+
         const response = await requestUrl({
           url,
           method: init?.method || 'GET',

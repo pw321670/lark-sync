@@ -1,6 +1,7 @@
 import type { FileEntry, FileState, SyncConfig, SyncResult } from './types';
 import { FeishuClient } from './feishu-client';
 import { FeishuDocClient } from './feishu-doc-client';
+import { RateLimiter } from './rate-limiter';
 import { StateTracker, type StateStore } from './state-tracker';
 import { UploadManager } from './upload-manager';
 
@@ -80,16 +81,18 @@ export class SyncCoordinator {
   }
 
   private async executeSync(config: SyncConfig, run: ActiveSync): Promise<SyncResult> {
+    const rateLimiter = new RateLimiter(5);
+
     const client = new FeishuClient({
       userAccessToken: config.userAccessToken,
       retryAttempts: config.retryAttempts,
       retryDelay: config.retryDelay,
-    });
+    }, rateLimiter);
 
     // 如果启用了 Markdown 文档模式，则创建文档客户端
     let docClient: FeishuDocClient | undefined;
     if (config.markdownSyncMode === 'document') {
-      docClient = new FeishuDocClient(config.userAccessToken);
+      docClient = new FeishuDocClient(config.userAccessToken, rateLimiter);
       this.log('飞书文档 API 客户端已启用');
     }
 

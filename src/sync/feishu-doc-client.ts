@@ -1,5 +1,7 @@
 import { requestUrl, type RequestUrlParam, type RequestUrlResponse } from 'obsidian';
 
+import type { RateLimiter } from './rate-limiter';
+
 enum BlockType {
   Page = 1,
   Text = 2,
@@ -215,7 +217,10 @@ export class FeishuDocClient {
   private readonly retryAttempts = 5;
   private readonly retryDelay = 2000;
 
-  constructor(private readonly userAccessToken: string) {}
+  constructor(
+    private readonly userAccessToken: string,
+    private readonly rateLimiter?: RateLimiter,
+  ) {}
 
   async checkAvailability(): Promise<boolean> {
     return true;
@@ -458,6 +463,10 @@ export class FeishuDocClient {
     let lastError: FeishuDocClientError | null = null;
 
     for (let attempt = 1; attempt <= this.retryAttempts; attempt += 1) {
+      if (this.rateLimiter) {
+        await this.rateLimiter.acquire();
+      }
+
       const response = await requestUrl({
         ...init,
         throw: false,
