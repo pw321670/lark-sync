@@ -98,6 +98,9 @@ There is no chunked upload path yet.
 - File uploads use `UploadManager.executeWithConcurrency()` with configurable concurrency.
 - Failed uploads are retried with configurable `retryAttempts` and `retryDelay`.
 - Request-level retry for transient Feishu API failures lives inside the client layer.
+- One `RateLimiter` instance is created per sync run and shared by both `FeishuClient` and `FeishuDocClient`.
+- The shared limiter must be concurrency-safe: concurrent callers may not observe the same slot and burst through together.
+- Limit responses such as Feishu `code = 99991400`, HTTP `429`, or a `Retry-After` header must feed back into the shared limiter so later requests back off globally instead of only sleeping locally.
 
 These are current plugin-runtime behaviors and should not be described as a legacy migration artifact anymore.
 
@@ -138,6 +141,84 @@ These are current plugin-runtime behaviors and should not be described as a lega
 - Seed a stale `Note.md` regular file beside the online doc and verify the next successful document-mode sync removes the stale regular file.
 - Sync a standard Markdown table and verify Feishu renders a real table block whose cells still show content for empty and non-empty cells.
 - Verify configured upload retries and concurrent upload limits behave as expected.
+- Start a large sync with concurrent uploads enabled and verify the shared limiter still spaces Feishu requests instead of releasing multiple workers in the same moment.
+- Force or observe a `99991400` / `429` rate-limit response and verify later requests back off through the shared limiter rather than immediately hammering again.
+
+## Scenario: Shared Rate Limit Guard For Feishu APIs
+
+### 1. Scope / Trigger
+
+- Trigger: large sync runs can hit Feishu `99991400` rate limits, and a naive timestamp-only limiter is not enough once multiple upload workers queue requests concurrently.
+
+### 2. Signatures
+
+- [`src/sync/rate-limiter.ts`](../../../src/sync/rate-limiter.ts)
+  - `acquire()`
+  - `noteRateLimit(options?)`
+  - `noteSuccess()`
+- [`src/sync/feishu-client.ts`](../../../src/sync/feishu-client.ts)
+  - `fetchWithRetry(url, init?)`
+- [`src/sync/feishu-doc-client.ts`](../../../src/sync/feishu-doc-client.ts)
+  - `requestApi(init, action)`
+- [`src/sync/sync-coordinator.ts`](../../../src/sync/sync-coordinator.ts)
+  - `executeSync(config, run)`
+
+### 3. Contracts
+
+- One sync run creates one shared `RateLimiter` and injects it into both Feishu clients.
+- Every outbound Feishu Drive / Doc request must call `await limiter.acquire()` before hitting `requestUrl(...)`.
+- `acquire()` must serialize concurrent callers; it cannot rely on each caller reading the same `lastAcquireTime` independently.
+- On successful requests, clients should call `limiter.noteSuccess()` to reset consecutive rate-limit escalation.
+- On rate-limit responses, clients should call `limiter.noteRateLimit({ retryAfterMs })` so later requests inherit a shared backoff window.
+- Request-level retry remains a safety net, but rate-limit pacing is owned by the shared limiter.
+
+### 4. Validation & Error Matrix
+
+| Case | Expected behavior |
+|------|-------------------|
+| Multiple upload workers call `acquire()` at once | requests are serialized and spaced by the limiter interval |
+| Feishu returns `code = 99991400` | classify as rate-limit, push shared next-available time forward |
+| Feishu returns HTTP `429` with `Retry-After` | classify as rate-limit and honor the header when extending backoff |
+| Non-rate-limit API failure | keep normal retry/failure behavior; do not silently classify as rate-limit |
+| Later request succeeds after a rate-limit spell | limiter resets consecutive escalation |
+
+### 5. Good / Base / Bad Cases
+
+- Good: concurrent sync work still looks like one globally paced Feishu request stream.
+- Base: request-level retries still exist after the limiter, but they no longer create synchronized retry storms.
+- Bad: each worker reads the same timestamp and fires together, or a rate-limit response only sleeps one failing request while other workers continue at full speed.
+
+### 6. Tests Required
+
+- Queue several concurrent `acquire()` calls and assert their release times stay spaced.
+- Exercise both Drive and DocX requests in one sync run and assert they share the same pacing boundary.
+- Simulate a rate-limit response and assert the next request waits for the limiter backoff window.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const now = Date.now();
+const wait = minInterval - (now - lastAcquireTime);
+if (wait > 0) {
+  await sleep(wait);
+}
+lastAcquireTime = Date.now();
+```
+
+#### Correct
+
+```ts
+const slot = queue.then(async () => {
+  while (nextAvailableAt > Date.now()) {
+    await sleep(nextAvailableAt - Date.now());
+  }
+  nextAvailableAt = Date.now() + minInterval;
+});
+queue = slot.catch(() => {});
+await slot;
+```
 
 ## Scenario: Markdown To Feishu Online Documents
 

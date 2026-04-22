@@ -8,9 +8,10 @@ import {
   buildSyncConfig,
   toUiSyncSummary,
   type StateStore,
+  type SyncProgress,
   type SyncResult,
 } from './sync';
-import { NotificationManager, SyncButton, registerSyncCommands } from './ui';
+import { NotificationManager, SyncButton, SyncStatusBar, registerSyncCommands } from './ui';
 import {
   DEFAULT_PLUGIN_DATA,
   getMissingConfigFields,
@@ -29,6 +30,7 @@ export default class LarkSyncPlugin extends Plugin {
   private pluginData: PluginData = DEFAULT_PLUGIN_DATA;
   private oauth: FeishuOAuth | null = null;
   private syncButton: SyncButton | null = null;
+  private syncStatusBar: SyncStatusBar | null = null;
   private notificationManager: NotificationManager | null = null;
   private syncCoordinator: SyncCoordinator | null = null;
 
@@ -39,6 +41,7 @@ export default class LarkSyncPlugin extends Plugin {
     this.initOAuth();
     this.initSyncCoordinator();
     this.initUIComponents();
+    this.syncStatusBar?.setSummary(this.pluginData.lastSync);
 
     this.addSettingTab(new LarkSyncSettingTab(this.app, this));
     this.registerCommands();
@@ -46,6 +49,7 @@ export default class LarkSyncPlugin extends Plugin {
 
   onunload(): void {
     this.syncButton?.destroy();
+    this.syncStatusBar?.destroy();
 
     if (this.syncCoordinator) {
       this.syncCoordinator.destroy().catch(console.error);
@@ -93,6 +97,7 @@ export default class LarkSyncPlugin extends Plugin {
     this.syncButton = new SyncButton(this, {
       onClick: async () => this.startSync(),
     });
+    this.syncStatusBar = new SyncStatusBar(this);
 
     registerSyncCommands(this, {
       startSync: async () => this.startSync(),
@@ -159,6 +164,7 @@ export default class LarkSyncPlugin extends Plugin {
       readBinary: (path) => this.app.vault.adapter.readBinary(path.replace(/\\/g, '/')),
     }, {
       stateStore,
+      onProgress: (progress) => this.handleSyncProgress(progress),
     });
 
     this.syncCoordinator.initialize().catch((error) => {
@@ -170,26 +176,31 @@ export default class LarkSyncPlugin extends Plugin {
     const missing = getMissingConfigFields(this.pluginData.config);
     if (missing.length > 0) {
       this.notificationManager?.needsConfiguration(missing);
+      this.syncStatusBar?.setBlocked(`Missing required settings: ${missing.join(', ')}`);
       return;
     }
 
     if (!this.pluginData.auth.refreshToken) {
       this.notificationManager?.needsAuthorization();
+      this.syncStatusBar?.setBlocked('Please authorize with Feishu first.');
       return;
     }
 
     if (!this.syncCoordinator) {
       this.notificationManager?.error('Sync coordinator not initialized');
+      this.syncStatusBar?.setBlocked('Sync coordinator not initialized');
       return;
     }
 
     if (this.syncCoordinator.isSyncing()) {
       this.notificationManager?.concurrentSyncBlocked();
+      this.syncStatusBar?.setBlocked('A sync is already in progress.');
       return;
     }
 
     this.notificationManager?.syncStarted();
     this.syncButton?.setSyncing();
+    this.syncStatusBar?.setStarting();
 
     try {
       await this.ensureValidAccessToken();
@@ -203,6 +214,7 @@ export default class LarkSyncPlugin extends Plugin {
       const summary = toUiSyncSummary(result);
 
       await this.storeSyncSummary(result);
+      this.syncStatusBar?.setSummary(this.pluginData.lastSync);
       this.notificationManager?.syncCompleted(summary);
 
       if (summary.status === 'partial') {
@@ -218,11 +230,13 @@ export default class LarkSyncPlugin extends Plugin {
       this.syncButton?.setSuccess();
     } catch (error) {
       if (error instanceof SyncCancelledError) {
+        this.syncStatusBar?.setCancelled();
         return;
       }
 
       const message = error instanceof Error ? error.message : String(error);
       await this.storeSyncFailure(message);
+      this.syncStatusBar?.setSummary(this.pluginData.lastSync);
       this.notificationManager?.error(`Failed to start sync: ${message}`);
       this.syncButton?.setError();
     }
@@ -251,6 +265,7 @@ export default class LarkSyncPlugin extends Plugin {
     this.syncCoordinator.cancelSync();
     this.notificationManager?.syncCancelled();
     this.syncButton?.setIdle();
+    this.syncStatusBar?.setCancelled();
   }
 
   private registerCommands(): void {
@@ -314,6 +329,7 @@ export default class LarkSyncPlugin extends Plugin {
       };
 
       await this.persistPluginData();
+      this.syncStatusBar?.setSummary(this.pluginData.lastSync);
       new Notice(summary.message);
       this.openSettings();
       return;
@@ -338,7 +354,12 @@ export default class LarkSyncPlugin extends Plugin {
     };
 
     await this.persistPluginData();
+    this.syncStatusBar?.setSummary(this.pluginData.lastSync);
     new Notice(preview.message, 7000);
+  }
+
+  private handleSyncProgress(progress: SyncProgress): void {
+    this.syncStatusBar?.setProgress(progress);
   }
 
   private showLastSyncSummary(): void {
@@ -400,14 +421,22 @@ export default class LarkSyncPlugin extends Plugin {
   }
 
   private async storeSyncSummary(result: SyncResult): Promise<void> {
-    const success = result.success && result.failedCount === 0;
+    const status =
+      result.failedCount > 0
+        ? result.uploadedCount > 0 || result.skippedCount > 0
+          ? 'partial'
+          : 'failed'
+        : 'success';
     this.pluginData = {
       ...this.pluginData,
       lastSync: {
-        status: success ? 'success' : 'failed',
-        message: success
-          ? `Uploaded ${result.uploadedCount} file(s), skipped ${result.skippedCount}.`
-          : result.error || `Failed on ${result.failedFiles[0]?.path || 'unknown file'}.`,
+        status,
+        message:
+          status === 'success'
+            ? `Uploaded ${result.uploadedCount} file(s), skipped ${result.skippedCount}.`
+            : status === 'partial'
+              ? `Uploaded ${result.uploadedCount} file(s), skipped ${result.skippedCount}, failed ${result.failedCount}.`
+              : result.error || `Failed on ${result.failedFiles[0]?.path || 'unknown file'}.`,
         scannedAt: new Date().toISOString(),
         filesDiscovered: result.filesDiscovered,
         excludedCount: result.excludedCount,

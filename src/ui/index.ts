@@ -10,3 +10,5 @@ export {
   type SyncButtonOptions,
   type SyncCommandHandlers,
 } from './sync-button';
+
+export { SyncStatusBar } from './sync-status-bar';

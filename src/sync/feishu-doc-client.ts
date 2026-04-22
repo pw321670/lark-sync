@@ -200,6 +200,8 @@ export class FeishuDocClientError extends Error {
     readonly apiMessage?: string,
     readonly isMissing = false,
     readonly responseText?: string,
+    readonly retryAfterMs?: number,
+    readonly isRateLimit = false,
   ) {
     super(message);
     this.name = 'FeishuDocClientError';
@@ -215,7 +217,6 @@ export class FeishuDocClient {
   private readonly maxBlocksPerCreateRequest = 50;
   private readonly maxDescendantBlocksPerRequest = 1000;
   private readonly retryAttempts = 5;
-  private readonly retryDelay = 2000;
 
   constructor(
     private readonly userAccessToken: string,
@@ -482,8 +483,7 @@ export class FeishuDocClient {
         lastError = this.buildError(action, response, payload);
 
         if (this.isRateLimitError(lastError) && attempt < this.retryAttempts) {
-          const delay = this.retryDelay * Math.pow(2, attempt - 1);
-          await this.sleep(delay);
+          this.rateLimiter?.noteRateLimit({ retryAfterMs: lastError.retryAfterMs });
           continue;
         }
 
@@ -494,6 +494,7 @@ export class FeishuDocClient {
         throw lastError;
       }
 
+      this.rateLimiter?.noteSuccess();
       return (payload.data ?? {}) as TData;
     }
 
@@ -501,8 +502,7 @@ export class FeishuDocClient {
   }
 
   private isRateLimitError(error: FeishuDocClientError): boolean {
-    return error.apiCode === 99991400
-      || (error.apiMessage?.includes('frequency limit') ?? false);
+    return error.isRateLimit;
   }
 
   private sleep(ms: number): Promise<void> {
@@ -516,8 +516,14 @@ export class FeishuDocClient {
   ): FeishuDocClientError {
     const apiCode = payload?.code;
     const apiMessage = payload?.msg || response.text;
+    const retryAfterMs = this.parseRetryAfterMs(response.headers);
     const isMissing =
       response.status === 404 || apiCode === 1770002 || apiCode === 1770003;
+    const isRateLimit =
+      response.status === 429
+      || apiCode === 99991400
+      || (apiMessage?.toLowerCase().includes('frequency limit') ?? false)
+      || (apiMessage?.includes('限频') ?? false);
     const detail = apiCode ? `code=${apiCode}, msg=${apiMessage || 'unknown error'}` : response.text;
 
     console.error('[FeishuDocClient] 请求失败:', {
@@ -535,7 +541,32 @@ export class FeishuDocClient {
       apiMessage,
       isMissing,
       response.text,
+      retryAfterMs,
+      isRateLimit,
     );
+  }
+
+  private parseRetryAfterMs(headers: Record<string, string> | undefined): number | undefined {
+    if (!headers) {
+      return undefined;
+    }
+
+    const retryAfterValue = headers['retry-after'] ?? headers['Retry-After'];
+    if (!retryAfterValue) {
+      return undefined;
+    }
+
+    const seconds = Number(retryAfterValue);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return seconds * 1000;
+    }
+
+    const retryAt = Date.parse(retryAfterValue);
+    if (!Number.isNaN(retryAt)) {
+      return Math.max(0, retryAt - Date.now());
+    }
+
+    return undefined;
   }
 
   private convertMarkdownToOperations(markdown: string): BlockAppendOperation[] {

@@ -31,7 +31,7 @@ export interface FeishuAuthState {
   grantedScopes: string[];
 }
 
-export type SyncRunStatus = 'idle' | 'preview' | 'blocked' | 'success' | 'failed';
+export type SyncRunStatus = 'idle' | 'preview' | 'blocked' | 'success' | 'partial' | 'failed';
 
 export interface SyncSummary {
   status: SyncRunStatus;

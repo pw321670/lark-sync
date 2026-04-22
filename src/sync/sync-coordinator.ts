@@ -1,4 +1,4 @@
-import type { FileEntry, FileState, SyncConfig, SyncResult } from './types';
+import type { FileEntry, FileState, SyncConfig, SyncProgress, SyncResult } from './types';
 import { FeishuClient } from './feishu-client';
 import { FeishuDocClient } from './feishu-doc-client';
 import { RateLimiter } from './rate-limiter';
@@ -13,6 +13,7 @@ export interface SyncVault {
 export interface CoordinatorOptions {
   verbose?: boolean;
   stateStore?: StateStore;
+  onProgress?: (progress: SyncProgress) => void;
 }
 
 interface ActiveSync {
@@ -81,7 +82,7 @@ export class SyncCoordinator {
   }
 
   private async executeSync(config: SyncConfig, run: ActiveSync): Promise<SyncResult> {
-    const rateLimiter = new RateLimiter(5);
+    const rateLimiter = new RateLimiter(4);
 
     const client = new FeishuClient({
       userAccessToken: config.userAccessToken,
@@ -100,11 +101,39 @@ export class SyncCoordinator {
       readFileContent: (path) => this.vault.readBinary(path.replace(/\\/g, '/')),
     }, docClient);
 
+    this.emitProgress({
+      phase: 'scanning',
+      filesDiscovered: 0,
+      candidateCount: 0,
+      excludedCount: 0,
+      oversizedCount: 0,
+      skippedCount: 0,
+      uploadedCount: 0,
+      failedCount: 0,
+      processedCount: 0,
+      totalCount: 0,
+    });
+
     const scannedFiles = this.scanFiles();
     this.throwIfCancelled(run);
 
     const filtered = this.filterFiles(scannedFiles, config);
     const changedFiles = this.detectChanges(filtered.validFiles, config);
+    const skippedCount = filtered.validFiles.length - changedFiles.length;
+
+    this.emitProgress({
+      phase: 'ensuring-folders',
+      filesDiscovered: scannedFiles.length,
+      candidateCount: filtered.validFiles.length,
+      excludedCount: filtered.excludedCount,
+      oversizedCount: filtered.oversizedFiles.length,
+      skippedCount,
+      uploadedCount: 0,
+      failedCount: 0,
+      processedCount: skippedCount,
+      totalCount: filtered.validFiles.length,
+    });
+
     this.throwIfCancelled(run);
 
     const folderMap = await this.createFolderStructure(changedFiles, client, config, run);
@@ -122,6 +151,21 @@ export class SyncCoordinator {
       retryAttempts: config.retryAttempts,
       retryDelay: config.retryDelay,
       isCancelled: () => run.cancelled,
+      onFileComplete: (progress) => {
+        this.emitProgress({
+          phase: 'uploading',
+          filesDiscovered: scannedFiles.length,
+          candidateCount: filtered.validFiles.length,
+          excludedCount: filtered.excludedCount,
+          oversizedCount: filtered.oversizedFiles.length,
+          skippedCount,
+          uploadedCount: progress.uploadedCount,
+          failedCount: progress.failedCount,
+          processedCount: skippedCount + progress.completedCount,
+          totalCount: filtered.validFiles.length,
+          currentPath: progress.currentPath,
+        });
+      },
     });
     this.throwIfCancelled(run);
 
@@ -129,9 +173,22 @@ export class SyncCoordinator {
       this.stateTracker.updateFileStates(uploadResult.uploadedStates);
     }
 
+    this.emitProgress({
+      phase: 'writing-state',
+      filesDiscovered: scannedFiles.length,
+      candidateCount: filtered.validFiles.length,
+      excludedCount: filtered.excludedCount,
+      oversizedCount: filtered.oversizedFiles.length,
+      skippedCount,
+      uploadedCount: uploadResult.uploadedCount,
+      failedCount: uploadResult.failedCount,
+      processedCount: filtered.validFiles.length,
+      totalCount: filtered.validFiles.length,
+    });
+
     await this.stateTracker.save();
 
-    return {
+    const result: SyncResult = {
       success: uploadResult.failedCount === 0,
       error:
         uploadResult.failedCount > 0
@@ -142,12 +199,27 @@ export class SyncCoordinator {
       oversizedCount: filtered.oversizedFiles.length,
       candidateCount: filtered.validFiles.length,
       uploadedCount: uploadResult.uploadedCount,
-      skippedCount: filtered.validFiles.length - changedFiles.length,
+      skippedCount,
       failedCount: uploadResult.failedCount,
       failedFiles: uploadResult.failedFiles,
       totalBytesUploaded: uploadResult.totalBytesUploaded,
       duration: Date.now() - run.startedAt,
     };
+
+    this.emitProgress({
+      phase: 'completed',
+      filesDiscovered: result.filesDiscovered,
+      candidateCount: result.candidateCount,
+      excludedCount: result.excludedCount,
+      oversizedCount: result.oversizedCount,
+      skippedCount: result.skippedCount,
+      uploadedCount: result.uploadedCount,
+      failedCount: result.failedCount,
+      processedCount: result.candidateCount,
+      totalCount: result.candidateCount,
+    });
+
+    return result;
   }
 
   private scanFiles(): FileEntry[] {
@@ -275,6 +347,10 @@ export class SyncCoordinator {
     if (run.cancelled) {
       throw new SyncCancelledError();
     }
+  }
+
+  private emitProgress(progress: SyncProgress): void {
+    this.options.onProgress?.(progress);
   }
 
   private log(_message: string): void {}

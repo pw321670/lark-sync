@@ -61,9 +61,8 @@ Use the current plugin product name in sync notices and command labels so rename
 Use a longer-lived surface for in-progress work:
 
 - ribbon icon state
+- status-bar progress text
 - persisted last result summary
-
-The current plugin intentionally uses ribbon state plus saved summary instead of a status-bar line.
 
 ### Last Result Summary
 
@@ -96,6 +95,7 @@ Rules:
 
 - Do not invent percentage progress before total work is known.
 - Once scan results are known, progress should include counts when possible.
+- The current status bar should report processed file counts against total candidate files, plus uploaded/skipped/failed counts when known.
 - Report large-file skips explicitly.
 - If the run stops on an upload or doc-creation error, the UI must say the run stopped early.
 
@@ -151,11 +151,11 @@ These facts should not stay hidden in implementation details.
 - hiding skipped oversize files from the final summary
 - exposing raw secret values in notices, modals, or logs
 
-## Scenario: Ribbon + Notice UX Without Status Bar
+## Scenario: Ribbon + Notice + Status Bar Progress
 
 ### 1. Scope / Trigger
 
-- Trigger: the plugin has a real ribbon button and persisted summary, but the status-bar text was deliberately removed during cleanup.
+- Trigger: large sync runs need a bottom status-bar surface so users can see real-time file progress instead of waiting only for the final Notice.
 
 ### 2. Signatures
 
@@ -170,44 +170,59 @@ These facts should not stay hidden in implementation details.
   - `syncCompleted(summary)`
   - `needsConfiguration(fields)`
   - `needsAuthorization()`
+- `src/ui/sync-status-bar.ts`
+  - `setStarting()`
+  - `setBlocked(message)`
+  - `setProgress(progress)`
+  - `setSummary(summary)`
 
 ### 3. Contracts
 
 - The primary runtime surfaces are:
   - ribbon icon state,
+  - status-bar progress text,
   - short Notice messages,
   - persisted `lastSync` summary in plugin data.
-- There is currently no status-bar text surface and no manual token-refresh command; new work should not reintroduce either casually.
+- Status-bar text must render the same underlying runtime phases as the ribbon/notice flow:
+  - `Scanning vault`
+  - `Ensuring Feishu folders`
+  - `Uploading changed files`
+  - `Writing sync state`
+- Once scan results are known, the status bar should show processed file counts against total candidate files and include uploaded/skipped/failed counts when available.
+- Current file path, if shown, should stay in the tooltip/title rather than bloating the one-line status text.
 
 ### 4. Validation & Error Matrix
 
 | Case | Expected UX |
 |------|-------------|
-| Sync started | notice + ribbon enters syncing state |
-| Sync completed with zero failures | success notice + ribbon success state |
+| Sync started | notice + ribbon enters syncing state + status bar shows start/progress text |
+| Scan finished and totals are known | status bar shows processed/total counts |
+| Sync completed with zero failures | success notice + ribbon success state + status bar summary |
 | Sync completed with file failures | warning or failed summary, never silent success |
-| Sync blocked by config/auth | warning notice before any side effects |
-| User cancels sync | cancellation notice + ribbon returns to idle without a success flash |
+| Sync blocked by config/auth | warning notice before any side effects + blocked status-bar message |
+| User cancels sync | cancellation notice + ribbon returns to idle without a success flash + cancelled status-bar message |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: a concise Notice plus a persisted summary users can query later.
-- Base: a ribbon-only live indicator with no extra panels.
-- Bad: reintroducing developer-console spam or a permanent status bar line just to show progress.
+- Good: one runtime progress vocabulary rendered into ribbon, notice, and status bar without duplicating sync logic in the UI layer.
+- Base: status bar shows `processed/total`, `uploaded`, `skipped`, and `failed` on one line.
+- Bad: UI invents its own counters instead of consuming structured runtime progress, or multiple layers log/announce conflicting progress text.
 
 ### 6. Tests Required
 
-- Clicking the ribbon button should not create a status-bar item.
+- Plugin load should create one status-bar item and reuse it across sync runs.
+- Clicking the ribbon button should update the existing status-bar item instead of creating duplicates.
 - Failing sync should leave a failed summary in plugin data.
 - Partial sync should drive the ribbon into warning or error state before it returns to idle.
+- Large sync should update status bar counts while files finish.
 - Success should auto-reset the ribbon button back to idle after the short success window.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
-- show `Feishu Sync: ...` in the status bar while also logging the same state transitions in multiple layers
+- create an ad hoc status-bar string in `main.ts` that guesses progress separately from the sync runtime
 
 #### Correct
 
-- keep one transient UI path for runtime state and one persisted summary for later inspection
+- keep one structured runtime progress object and let ribbon, notice, and status bar render that same state

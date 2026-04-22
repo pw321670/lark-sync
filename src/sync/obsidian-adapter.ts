@@ -25,7 +25,12 @@ export function buildSyncConfig(options: SyncConfigBuilderOptions) {
 }
 
 export function toUiSyncSummary(result: SyncResult): UiSyncSummary {
-  const status = !result.success ? 'failed' : result.failedCount > 0 ? 'partial' : 'success';
+  const status =
+    result.failedCount > 0
+      ? result.uploadedCount > 0 || result.skippedCount > 0
+        ? 'partial'
+        : 'failed'
+      : 'success';
 
   return {
     status,

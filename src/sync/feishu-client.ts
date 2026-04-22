@@ -1,4 +1,4 @@
-import { requestUrl } from 'obsidian';
+import { requestUrl, type RequestUrlResponse } from 'obsidian';
 
 import type { RateLimiter } from './rate-limiter';
 import type { FeishuApiResponse, FeishuFileItem, UploadFileResponse } from './types';
@@ -16,6 +16,20 @@ interface FeishuRequestOptions {
   body?: string | ArrayBuffer;
   contentType?: string;
   skipRetry?: boolean;
+}
+
+class FeishuClientError extends Error {
+  constructor(
+    message: string,
+    readonly status = 0,
+    readonly apiCode?: number,
+    readonly apiMessage?: string,
+    readonly retryAfterMs?: number,
+    readonly isRateLimit = false,
+  ) {
+    super(message);
+    this.name = 'FeishuClientError';
+  }
 }
 
 export class FeishuClient {
@@ -151,36 +165,24 @@ export class FeishuClient {
       fileContent,
     );
 
-    // 🔍 调试信息：上传前记录详细信息（方便后续删除）
-    try {
-      const response = await this.fetchWithRetry<UploadFileResponse>(
-        `${this.baseURL}/drive/v1/files/upload_all`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${this.config.userAccessToken}`,
-          },
-          contentType,
-          body,
+    const response = await this.fetchWithRetry<UploadFileResponse>(
+      `${this.baseURL}/drive/v1/files/upload_all`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.config.userAccessToken}`,
         },
-      );
+        contentType,
+        body,
+      },
+    );
 
-      const token = response.data?.fileToken ?? response.data?.file_token ?? response.data?.token;
-      if (!token) {
-        console.error('[Feishu Upload] 响应中缺少文件 token:', response);
-        throw new Error(`Upload response missing file token: ${JSON.stringify(response)}`);
-      }
-
-      return token;
-    } catch (error) {
-      console.error('[Feishu Upload] 上传失败:', {
-        fileName,
-        error: error instanceof Error ? error.message : String(error),
-        fileSize,
-        parentFolderToken
-      });
-      throw error;
+    const token = response.data?.fileToken ?? response.data?.file_token ?? response.data?.token;
+    if (!token) {
+      throw new Error(`Upload response missing file token: ${JSON.stringify(response)}`);
     }
+
+    return token;
   }
 
   private async fetchWithRetry<T>(
@@ -188,7 +190,7 @@ export class FeishuClient {
     init?: FeishuRequestOptions,
   ): Promise<FeishuApiResponse<T>> {
     const maxAttempts = init?.skipRetry ? 1 : this.retryAttempts;
-    let lastError: Error | null = null;
+    let lastError: FeishuClientError | Error | null = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
@@ -202,23 +204,27 @@ export class FeishuClient {
           headers: init?.headers,
           contentType: init?.contentType,
           body: init?.body,
+          throw: false,
         });
 
         const data = response.json as FeishuApiResponse<T>;
-
-        if (data.code !== 0) {
-          throw new Error(`Feishu API error (code=${data.code}): ${data.msg || 'unknown error'}`);
+        if (response.status >= 400 || data.code !== 0) {
+          throw this.buildError(response, data);
         }
 
+        this.rateLimiter?.noteSuccess();
         return data;
       } catch (error) {
         lastError = error as Error;
 
         if (attempt < maxAttempts) {
-          const delay = this.isRateLimitError(lastError)
-            ? this.retryDelay * Math.pow(2, attempt)
-            : this.retryDelay;
-          await this.sleep(delay);
+          const retryAfterMs = this.getRetryAfterMs(lastError);
+          if (this.isRateLimitError(lastError)) {
+            this.rateLimiter?.noteRateLimit({ retryAfterMs });
+            continue;
+          }
+
+          await this.sleep(this.retryDelay);
         }
       }
     }
@@ -227,7 +233,65 @@ export class FeishuClient {
   }
 
   private isRateLimitError(error: Error): boolean {
+    if (error instanceof FeishuClientError) {
+      return error.isRateLimit;
+    }
+
     return error.message.includes('99991400') || error.message.includes('frequency limit');
+  }
+
+  private getRetryAfterMs(error: Error): number | undefined {
+    return error instanceof FeishuClientError ? error.retryAfterMs : undefined;
+  }
+
+  private buildError(
+    response: RequestUrlResponse,
+    payload?: FeishuApiResponse<unknown>,
+  ): FeishuClientError {
+    const apiCode = typeof payload?.code === 'number' ? payload.code : undefined;
+    const apiMessage = payload?.msg || response.text;
+    const retryAfterMs = this.parseRetryAfterMs(response.headers);
+    const isRateLimit =
+      response.status === 429
+      || apiCode === 99991400
+      || (apiMessage?.toLowerCase().includes('frequency limit') ?? false)
+      || (apiMessage?.includes('限频') ?? false);
+    const detail =
+      apiCode !== undefined
+        ? `code=${apiCode}, msg=${apiMessage || 'unknown error'}`
+        : apiMessage || `HTTP ${response.status}`;
+
+    return new FeishuClientError(
+      `Feishu API error: ${detail}`,
+      response.status,
+      apiCode,
+      apiMessage,
+      retryAfterMs,
+      isRateLimit,
+    );
+  }
+
+  private parseRetryAfterMs(headers: Record<string, string> | undefined): number | undefined {
+    if (!headers) {
+      return undefined;
+    }
+
+    const retryAfterValue = headers['retry-after'] ?? headers['Retry-After'];
+    if (!retryAfterValue) {
+      return undefined;
+    }
+
+    const seconds = Number(retryAfterValue);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return seconds * 1000;
+    }
+
+    const retryAt = Date.parse(retryAfterValue);
+    if (!Number.isNaN(retryAt)) {
+      return Math.max(0, retryAt - Date.now());
+    }
+
+    return undefined;
   }
 
   private buildMultipartBody(
@@ -239,32 +303,27 @@ export class FeishuClient {
     const encoder = new TextEncoder();
     const chunks: Uint8Array[] = [];
 
-    // 🔍 调试信息：记录 multipart 构建过程（方便后续删除）
-    // 添加表单字段
     for (const [name, value] of Object.entries(fields)) {
       const chunk = encoder.encode(
-        `--${boundary}\r\n` +
-        `Content-Disposition: form-data; name="${name}"\r\n\r\n` +
-        `${value}\r\n`
+        `--${boundary}\r\n`
+        + `Content-Disposition: form-data; name="${name}"\r\n\r\n`
+        + `${value}\r\n`,
       );
       chunks.push(chunk);
     }
 
-    // 添加文件字段 - 转义文件名中的特殊字符以防止 multipart 注入
-    // 移除可能破坏 multipart 格式的字符：引号、换行符等
     const safeFileName = fileName.replace(/[\r\n"]/g, '');
 
     const fileHeader = encoder.encode(
-      `--${boundary}\r\n` +
-      `Content-Disposition: form-data; name="file"; filename="${safeFileName}"\r\n` +
-      `Content-Type: application/octet-stream\r\n\r\n`
+      `--${boundary}\r\n`
+      + `Content-Disposition: form-data; name="file"; filename="${safeFileName}"\r\n`
+      + 'Content-Type: application/octet-stream\r\n\r\n',
     );
 
     chunks.push(fileHeader);
     chunks.push(new Uint8Array(fileContent));
     chunks.push(encoder.encode(`\r\n--${boundary}--\r\n`));
 
-    // 合并所有 chunk
     const totalLength = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
     const merged = new Uint8Array(totalLength);
     let offset = 0;

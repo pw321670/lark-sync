@@ -49,6 +49,27 @@ export interface SyncResult {
   duration: number;
 }
 
+export type SyncPhase =
+  | 'scanning'
+  | 'ensuring-folders'
+  | 'uploading'
+  | 'writing-state'
+  | 'completed';
+
+export interface SyncProgress {
+  phase: SyncPhase;
+  filesDiscovered: number;
+  candidateCount: number;
+  excludedCount: number;
+  oversizedCount: number;
+  skippedCount: number;
+  uploadedCount: number;
+  failedCount: number;
+  processedCount: number;
+  totalCount: number;
+  currentPath?: string;
+}
+
 export interface FeishuFileItem {
   type: string;
   name: string;

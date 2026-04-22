@@ -29,6 +29,7 @@ export interface UploadOptions {
   retryAttempts?: number;
   retryDelay?: number;
   isCancelled?: () => boolean;
+  onFileComplete?: (progress: UploadProgress) => void;
 }
 
 export interface UploadResult {
@@ -63,6 +64,14 @@ interface UploadOperationResult {
   remote?: RemoteFileRef;
 }
 
+export interface UploadProgress {
+  completedCount: number;
+  totalCount: number;
+  uploadedCount: number;
+  failedCount: number;
+  currentPath?: string;
+}
+
 export class UploadManager {
   constructor(
     private readonly config: SyncConfig,
@@ -90,6 +99,21 @@ export class UploadManager {
     };
 
     const tasks: UploadTask[] = [];
+    let completedCount = 0;
+    let uploadedCount = 0;
+    let failedCount = 0;
+    const totalCount = files.length;
+
+    const emitProgress = (currentPath?: string): void => {
+      options.onFileComplete?.({
+        completedCount,
+        totalCount,
+        uploadedCount,
+        failedCount,
+        currentPath,
+      });
+    };
+
     for (const file of files) {
       const parentRelPath = this.getParentRelPath(file.relPath);
       const parentToken = folderMap[parentRelPath];
@@ -100,6 +124,9 @@ export class UploadManager {
           error: `Parent folder token not found: ${parentRelPath}`,
         });
         result.failedCount += 1;
+        failedCount += 1;
+        completedCount += 1;
+        emitProgress(file.relPath);
         continue;
       }
 
@@ -113,7 +140,23 @@ export class UploadManager {
     const completedResults = await this.executeWithConcurrency(
       tasks,
       concurrency,
-      (task) => this.uploadFileWithRetry(task, retryAttempts, retryDelay, options.isCancelled),
+      async (task) => {
+        const uploadResult = await this.uploadFileWithRetry(
+          task,
+          retryAttempts,
+          retryDelay,
+          options.isCancelled,
+        );
+
+        completedCount += 1;
+        if (uploadResult.success) {
+          uploadedCount += 1;
+        } else {
+          failedCount += 1;
+        }
+        emitProgress(uploadResult.file.relPath);
+        return uploadResult;
+      },
       options.isCancelled,
     );
 
