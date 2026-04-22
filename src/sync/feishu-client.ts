@@ -189,7 +189,6 @@ export class FeishuClient {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        // 🔍 调试信息：记录请求详情（仅在上传失败时）
         const response = await requestUrl({
           url,
           method: init?.method || 'GET',
@@ -200,14 +199,7 @@ export class FeishuClient {
 
         const data = response.json as FeishuApiResponse<T>;
 
-        // 🔍 调试信息：记录飞书 API 响应错误
         if (data.code !== 0) {
-          console.error('[Feishu API] API 返回错误:', {
-            url,
-            code: data.code,
-            msg: data.msg,
-            fullResponse: data
-          });
           throw new Error(`Feishu API error (code=${data.code}): ${data.msg || 'unknown error'}`);
         }
 
@@ -215,22 +207,20 @@ export class FeishuClient {
       } catch (error) {
         lastError = error as Error;
 
-        // 🔍 调试信息：记录网络错误
-        if (url.includes('upload_all')) {
-          console.error('[Feishu API] 请求失败:', {
-            attempt,
-            error: lastError.message,
-            url
-          });
-        }
-
         if (attempt < maxAttempts) {
-          await this.sleep(this.retryDelay);
+          const delay = this.isRateLimitError(lastError)
+            ? this.retryDelay * Math.pow(2, attempt)
+            : this.retryDelay;
+          await this.sleep(delay);
         }
       }
     }
 
     throw lastError || new Error('Request failed');
+  }
+
+  private isRateLimitError(error: Error): boolean {
+    return error.message.includes('99991400') || error.message.includes('frequency limit');
   }
 
   private buildMultipartBody(

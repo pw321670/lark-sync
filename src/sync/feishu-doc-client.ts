@@ -212,6 +212,8 @@ export class FeishuDocClient {
   private readonly defaultTableColumnWidth = 100;
   private readonly maxBlocksPerCreateRequest = 50;
   private readonly maxDescendantBlocksPerRequest = 1000;
+  private readonly retryAttempts = 5;
+  private readonly retryDelay = 2000;
 
   constructor(private readonly userAccessToken: string) {}
 
@@ -453,26 +455,49 @@ export class FeishuDocClient {
     init: Omit<RequestUrlParam, 'headers' | 'contentType' | 'throw'>,
     action: string,
   ): Promise<TData> {
-    const response = await requestUrl({
-      ...init,
-      throw: false,
-      headers: {
-        Authorization: `Bearer ${this.userAccessToken}`,
-      },
-      contentType: 'application/json; charset=utf-8',
-    });
+    let lastError: FeishuDocClientError | null = null;
 
-    const payload = response.json as ApiEnvelope<TData>;
+    for (let attempt = 1; attempt <= this.retryAttempts; attempt += 1) {
+      const response = await requestUrl({
+        ...init,
+        throw: false,
+        headers: {
+          Authorization: `Bearer ${this.userAccessToken}`,
+        },
+        contentType: 'application/json; charset=utf-8',
+      });
 
-    if (response.status >= 400) {
-      throw this.buildError(action, response, payload);
+      const payload = response.json as ApiEnvelope<TData>;
+
+      if (response.status >= 400 || payload.code !== 0) {
+        lastError = this.buildError(action, response, payload);
+
+        if (this.isRateLimitError(lastError) && attempt < this.retryAttempts) {
+          const delay = this.retryDelay * Math.pow(2, attempt - 1);
+          await this.sleep(delay);
+          continue;
+        }
+
+        if (!this.isRateLimitError(lastError)) {
+          throw lastError;
+        }
+
+        throw lastError;
+      }
+
+      return (payload.data ?? {}) as TData;
     }
 
-    if (payload.code !== 0) {
-      throw this.buildError(action, response, payload);
-    }
+    throw lastError || new FeishuDocClientError(`${action} failed after retries`, 0);
+  }
 
-    return (payload.data ?? {}) as TData;
+  private isRateLimitError(error: FeishuDocClientError): boolean {
+    return error.apiCode === 99991400
+      || (error.apiMessage?.includes('frequency limit') ?? false);
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private buildError(

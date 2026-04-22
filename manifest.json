@@ -1,7 +1,7 @@
 {
   "id": "lark-sync",
   "name": "Lark Sync",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "minAppVersion": "0.15.0",
   "description": "Desktop-first Obsidian plugin that syncs vault content to Lark and Feishu.",
   "author": "pw321670",
