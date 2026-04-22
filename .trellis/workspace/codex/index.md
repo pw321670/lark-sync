@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 1
-- **Last Active**: 2026-04-20
+- **Total Sessions**: 2
+- **Last Active**: 2026-04-22
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~41 | Active |
+| `journal-1.md` | ~79 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 2 | 2026-04-22 | 完成飞书文档富文本与表格同步 | `96827f6`, `130bbd3`, `891354b` | `main` |
 | 1 | 2026-04-20 | 修复重命名后的文档同步回归并调整默认文档模式 | `c00a86c`, `5c732ad` | `main` |
 <!-- @@@/auto:session-history -->
 
