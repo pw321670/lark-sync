@@ -18,6 +18,14 @@ interface FeishuClientLike {
     fileContent: ArrayBuffer,
     fileSize: number,
   ): Promise<string>;
+  rememberFolderItem(
+    folderToken: string,
+    item: { type: string; token: string; name: string },
+  ): void;
+  removeFolderItem(
+    folderToken: string,
+    matcher: { token?: string; name?: string; type?: string },
+  ): void;
 }
 
 export interface FileReader {
@@ -236,24 +244,15 @@ export class UploadManager {
   ): Promise<UploadOperationResult> {
     const fileName = this.getFileName(file.relPath);
 
-    try {
-      if (
-        this.isMarkdownFile(fileName) &&
-        this.feishuDocClient &&
-        this.config.markdownSyncMode !== 'file'
-      ) {
-        return await this.uploadAsDocument(file, parentFolderToken, fileName, previousState);
-      }
-
-      return await this.uploadAsRegularFile(file, parentFolderToken, fileName);
-    } catch (error) {
-      console.error('[UploadManager] 文件上传失败:', {
-        fileName,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-      throw error;
+    if (
+      this.isMarkdownFile(fileName) &&
+      this.feishuDocClient &&
+      this.config.markdownSyncMode !== 'file'
+    ) {
+      return await this.uploadAsDocument(file, parentFolderToken, fileName, previousState);
     }
+
+    return await this.uploadAsRegularFile(file, parentFolderToken, fileName);
   }
 
   private async uploadAsDocument(
@@ -300,6 +299,12 @@ export class UploadManager {
       });
       remoteRef = this.buildDocumentRef(created.docId, docTitle, parentFolderToken, created.docUrl);
     }
+
+    this.feishuClient.rememberFolderItem(parentFolderToken, {
+      type: 'docx',
+      token: remoteRef.token,
+      name: docTitle,
+    });
 
     // If this note was previously uploaded as a raw .md file, remove that stale
     // remote file after the online document path succeeds so the folder converges
@@ -417,6 +422,11 @@ export class UploadManager {
       }
 
       await this.feishuClient.deleteFile(existingItem.token, existingItem.type || 'file');
+      this.feishuClient.removeFolderItem(parentFolderToken, {
+        token: existingItem.token,
+        name: existingItem.name,
+        type: existingItem.type,
+      });
     }
   }
 

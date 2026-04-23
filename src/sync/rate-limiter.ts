@@ -2,6 +2,14 @@ export interface RateLimitPenaltyOptions {
   retryAfterMs?: number;
 }
 
+export interface RateLimiterSnapshot {
+  nextAvailableAt: number;
+  consecutiveRateLimitHits: number;
+  totalRateLimitHits: number;
+  lastPenaltyMs: number;
+  lastRateLimitAt: number;
+}
+
 export class RateLimiter {
   private readonly minIntervalMs: number;
   private readonly basePenaltyMs: number;
@@ -9,6 +17,9 @@ export class RateLimiter {
   private queue: Promise<void> = Promise.resolve();
   private nextAvailableAt = 0;
   private consecutiveRateLimitHits = 0;
+  private totalRateLimitHits = 0;
+  private lastPenaltyMs = 0;
+  private lastRateLimitAt = 0;
 
   constructor(
     qps: number,
@@ -46,6 +57,7 @@ export class RateLimiter {
 
   noteRateLimit(options: RateLimitPenaltyOptions = {}): number {
     this.consecutiveRateLimitHits += 1;
+    this.totalRateLimitHits += 1;
 
     const exponentialPenalty = Math.min(
       this.basePenaltyMs * Math.pow(2, this.consecutiveRateLimitHits - 1),
@@ -53,9 +65,21 @@ export class RateLimiter {
     );
     const penaltyMs = Math.max(options.retryAfterMs ?? 0, exponentialPenalty);
 
+    this.lastPenaltyMs = penaltyMs;
+    this.lastRateLimitAt = Date.now();
     this.nextAvailableAt = Math.max(this.nextAvailableAt, Date.now() + penaltyMs);
 
     return penaltyMs;
+  }
+
+  getSnapshot(): RateLimiterSnapshot {
+    return {
+      nextAvailableAt: this.nextAvailableAt,
+      consecutiveRateLimitHits: this.consecutiveRateLimitHits,
+      totalRateLimitHits: this.totalRateLimitHits,
+      lastPenaltyMs: this.lastPenaltyMs,
+      lastRateLimitAt: this.lastRateLimitAt,
+    };
   }
 
   private sleep(ms: number): Promise<void> {

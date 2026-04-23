@@ -37,6 +37,7 @@ export class FeishuClient {
   private readonly retryAttempts: number;
   private readonly retryDelay: number;
   private readonly rateLimiter: RateLimiter | null;
+  private readonly folderInventoryCache = new Map<string, FeishuFileItem[]>();
 
   constructor(private readonly config: FeishuClientConfig, rateLimiter?: RateLimiter) {
     this.baseURL = config.baseURL || 'https://open.feishu.cn/open-apis';
@@ -45,7 +46,17 @@ export class FeishuClient {
     this.rateLimiter = rateLimiter ?? null;
   }
 
-  async listFolderItems(folderToken: string): Promise<FeishuFileItem[]> {
+  async listFolderItems(
+    folderToken: string,
+    options: { forceRefresh?: boolean } = {},
+  ): Promise<FeishuFileItem[]> {
+    if (!options.forceRefresh) {
+      const cachedItems = this.folderInventoryCache.get(folderToken);
+      if (cachedItems) {
+        return this.cloneFolderItems(cachedItems);
+      }
+    }
+
     const url = new URL(`${this.baseURL}/drive/v1/files`);
     url.searchParams.set('folder_token', folderToken);
     url.searchParams.set('page_size', '200');
@@ -57,11 +68,14 @@ export class FeishuClient {
       },
     });
 
-    return (response.data?.files || []).map((item) => ({
+    const items = (response.data?.files || []).map((item) => ({
       type: item.type || '',
       name: item.name || '',
       token: item.token || '',
     }));
+
+    this.folderInventoryCache.set(folderToken, items);
+    return this.cloneFolderItems(items);
   }
 
   async createFolder(parentFolderToken: string, folderName: string): Promise<string> {
@@ -86,6 +100,11 @@ export class FeishuClient {
         );
 
         if (response.data?.token) {
+          this.rememberFolderItem(parentFolderToken, {
+            type: 'folder',
+            name: folderName,
+            token: response.data.token,
+          });
           return response.data.token;
         }
 
@@ -182,7 +201,54 @@ export class FeishuClient {
       throw new Error(`Upload response missing file token: ${JSON.stringify(response)}`);
     }
 
+    this.rememberFolderItem(parentFolderToken, {
+      type: 'file',
+      name: fileName,
+      token,
+    });
     return token;
+  }
+
+  rememberFolderItem(folderToken: string, item: FeishuFileItem): void {
+    const existingItems = this.folderInventoryCache.get(folderToken);
+    if (!existingItems) {
+      return;
+    }
+
+    const nextItems = existingItems.filter((existingItem) => existingItem.token !== item.token);
+    nextItems.push({
+      type: item.type || '',
+      name: item.name || '',
+      token: item.token || '',
+    });
+    this.folderInventoryCache.set(folderToken, nextItems);
+  }
+
+  removeFolderItem(
+    folderToken: string,
+    matcher: { token?: string; name?: string; type?: string },
+  ): void {
+    const existingItems = this.folderInventoryCache.get(folderToken);
+    if (!existingItems) {
+      return;
+    }
+
+    const nextItems = existingItems.filter((item) => {
+      if (matcher.token && item.token === matcher.token) {
+        return false;
+      }
+
+      if (
+        matcher.name
+        && item.name === matcher.name
+        && (!matcher.type || item.type === matcher.type)
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+    this.folderInventoryCache.set(folderToken, nextItems);
   }
 
   private async fetchWithRetry<T>(
@@ -276,6 +342,15 @@ export class FeishuClient {
       return undefined;
     }
 
+    const rateLimitResetValue =
+      headers['x-ogw-ratelimit-reset'] ?? headers['X-Ogw-Ratelimit-Reset'];
+    if (rateLimitResetValue) {
+      const resetSeconds = Number(rateLimitResetValue);
+      if (Number.isFinite(resetSeconds) && resetSeconds >= 0) {
+        return resetSeconds * 1000;
+      }
+    }
+
     const retryAfterValue = headers['retry-after'] ?? headers['Retry-After'];
     if (!retryAfterValue) {
       return undefined;
@@ -341,5 +416,9 @@ export class FeishuClient {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private cloneFolderItems(items: FeishuFileItem[]): FeishuFileItem[] {
+    return items.map((item) => ({ ...item }));
   }
 }

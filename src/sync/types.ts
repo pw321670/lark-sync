@@ -53,11 +53,15 @@ export type SyncPhase =
   | 'scanning'
   | 'ensuring-folders'
   | 'uploading'
+  | 'cooldown'
   | 'writing-state'
   | 'completed';
 
+export type SyncChannel = 'documents' | 'files';
+
 export interface SyncProgress {
   phase: SyncPhase;
+  channel?: SyncChannel;
   filesDiscovered: number;
   candidateCount: number;
   excludedCount: number;
@@ -68,6 +72,9 @@ export interface SyncProgress {
   processedCount: number;
   totalCount: number;
   currentPath?: string;
+  batchIndex?: number;
+  batchCount?: number;
+  cooldownRemainingMs?: number;
 }
 
 export interface FeishuFileItem {

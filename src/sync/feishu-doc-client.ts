@@ -551,6 +551,15 @@ export class FeishuDocClient {
       return undefined;
     }
 
+    const rateLimitResetValue =
+      headers['x-ogw-ratelimit-reset'] ?? headers['X-Ogw-Ratelimit-Reset'];
+    if (rateLimitResetValue) {
+      const resetSeconds = Number(rateLimitResetValue);
+      if (Number.isFinite(resetSeconds) && resetSeconds >= 0) {
+        return resetSeconds * 1000;
+      }
+    }
+
     const retryAfterValue = headers['retry-after'] ?? headers['Retry-After'];
     if (!retryAfterValue) {
       return undefined;
