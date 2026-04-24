@@ -1,0 +1,8 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/backend/quality-and-safety.md", "reason": "sync side effects and failure reporting guardrails"}
+{"file": ".trellis/spec/backend/filesystem-and-state.md", "reason": "incremental state and remote identity contract"}
+{"file": ".trellis/spec/backend/feishu-drive-sync.md", "reason": "folder listing upload and Feishu API contracts"}
+{"file": ".trellis/spec/backend/module-boundaries.md", "reason": "sync layer ownership boundaries"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "state to remote API data flow"}
+{"file": ".trellis/spec/guides/sync-safety-guide.md", "reason": "prevent false success and unsafe remote changes"}
