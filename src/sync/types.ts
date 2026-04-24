@@ -75,6 +75,7 @@ export interface SyncProgress {
   batchIndex?: number;
   batchCount?: number;
   cooldownRemainingMs?: number;
+  cooldownReason?: 'batch' | 'rate-limit';
 }
 
 export interface FeishuFileItem {

@@ -417,6 +417,7 @@ export class SyncCoordinator {
         batchCount: batches.length,
         aggregate,
         progressContext,
+        reason: sawRateLimit ? 'rate-limit' : 'batch',
         run,
       });
     }
@@ -443,9 +444,19 @@ export class SyncCoordinator {
     batchCount: number;
     aggregate: UploadAggregate;
     progressContext: ProgressContext;
+    reason: 'batch' | 'rate-limit';
     run: ActiveSync;
   }): Promise<void> {
-    const { cooldownMs, channel, batchIndex, batchCount, aggregate, progressContext, run } =
+    const {
+      cooldownMs,
+      channel,
+      batchIndex,
+      batchCount,
+      aggregate,
+      progressContext,
+      reason,
+      run,
+    } =
       params;
 
     if (cooldownMs <= 0) {
@@ -477,6 +488,7 @@ export class SyncCoordinator {
         batchIndex,
         batchCount,
         cooldownRemainingMs: remainingMs,
+        cooldownReason: reason,
       });
 
       await this.sleep(Math.min(1000, remainingMs));
