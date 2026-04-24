@@ -15,7 +15,13 @@ interface FeishuRequestOptions {
   headers?: Record<string, string>;
   body?: string | ArrayBuffer;
   contentType?: string;
-  skipRetry?: boolean;
+}
+
+interface ListFolderItemsResponse {
+  files?: FeishuFileItem[];
+  has_more?: boolean;
+  next_page_token?: string;
+  page_token?: string;
 }
 
 class FeishuClientError extends Error {
@@ -41,7 +47,7 @@ export class FeishuClient {
 
   constructor(private readonly config: FeishuClientConfig, rateLimiter?: RateLimiter) {
     this.baseURL = config.baseURL || 'https://open.feishu.cn/open-apis';
-    this.retryAttempts = config.retryAttempts ?? 3;
+    this.retryAttempts = Math.max(1, config.retryAttempts ?? 3);
     this.retryDelay = config.retryDelay ?? 1000;
     this.rateLimiter = rateLimiter ?? null;
   }
@@ -57,68 +63,73 @@ export class FeishuClient {
       }
     }
 
-    const url = new URL(`${this.baseURL}/drive/v1/files`);
-    url.searchParams.set('folder_token', folderToken);
-    url.searchParams.set('page_size', '200');
+    const items: FeishuFileItem[] = [];
+    let pageToken: string | undefined;
 
-    const response = await this.fetchWithRetry<{ files?: FeishuFileItem[] }>(url.toString(), {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${this.config.userAccessToken}`,
-      },
-    });
+    while (true) {
+      const url = new URL(`${this.baseURL}/drive/v1/files`);
+      url.searchParams.set('folder_token', folderToken);
+      url.searchParams.set('page_size', '200');
+      if (pageToken) {
+        url.searchParams.set('page_token', pageToken);
+      }
 
-    const items = (response.data?.files || []).map((item) => ({
-      type: item.type || '',
-      name: item.name || '',
-      token: item.token || '',
-    }));
+      const response = await this.fetchWithRetry<ListFolderItemsResponse>(url.toString(), {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${this.config.userAccessToken}`,
+        },
+      });
+
+      items.push(
+        ...(response.data?.files || []).map((item) => ({
+          type: item.type || '',
+          name: item.name || '',
+          token: item.token || '',
+        })),
+      );
+
+      if (!response.data?.has_more) {
+        break;
+      }
+
+      const nextPageToken = response.data.next_page_token ?? response.data.page_token;
+      if (!nextPageToken || nextPageToken === pageToken) {
+        throw new Error(`List folder returned has_more without a new page token: ${folderToken}`);
+      }
+      pageToken = nextPageToken;
+    }
 
     this.folderInventoryCache.set(folderToken, items);
     return this.cloneFolderItems(items);
   }
 
   async createFolder(parentFolderToken: string, folderName: string): Promise<string> {
-    let lastError: Error | null = null;
+    const response = await this.fetchWithRetry<{ token?: string }>(
+      `${this.baseURL}/drive/v1/files/create_folder`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.config.userAccessToken}`,
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+        body: JSON.stringify({
+          name: folderName,
+          folder_token: parentFolderToken,
+        }),
+      },
+    );
 
-    for (let attempt = 1; attempt <= this.retryAttempts; attempt += 1) {
-      try {
-        const response = await this.fetchWithRetry<{ token?: string }>(
-          `${this.baseURL}/drive/v1/files/create_folder`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${this.config.userAccessToken}`,
-              'Content-Type': 'application/json; charset=utf-8',
-            },
-            body: JSON.stringify({
-              name: folderName,
-              folder_token: parentFolderToken,
-            }),
-            skipRetry: true,
-          },
-        );
-
-        if (response.data?.token) {
-          this.rememberFolderItem(parentFolderToken, {
-            type: 'folder',
-            name: folderName,
-            token: response.data.token,
-          });
-          return response.data.token;
-        }
-
-        lastError = new Error(`Create folder returned no token for ${folderName}`);
-      } catch (error) {
-        lastError = error as Error;
-      }
-
-      if (attempt < this.retryAttempts) {
-        await this.sleep(this.retryDelay);
-      }
+    if (response.data?.token) {
+      this.rememberFolderItem(parentFolderToken, {
+        type: 'folder',
+        name: folderName,
+        token: response.data.token,
+      });
+      return response.data.token;
     }
 
-    throw lastError || new Error(`Failed to create folder: ${folderName}`);
+    throw new Error(`Create folder returned no token for ${folderName}`);
   }
 
   async ensureFolder(parentFolderToken: string, folderName: string): Promise<string> {
@@ -255,7 +266,7 @@ export class FeishuClient {
     url: string,
     init?: FeishuRequestOptions,
   ): Promise<FeishuApiResponse<T>> {
-    const maxAttempts = init?.skipRetry ? 1 : this.retryAttempts;
+    const maxAttempts = this.retryAttempts;
     let lastError: FeishuClientError | Error | null = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -282,11 +293,13 @@ export class FeishuClient {
         return data;
       } catch (error) {
         lastError = error as Error;
+        const retryAfterMs = this.getRetryAfterMs(lastError);
+        if (this.isRateLimitError(lastError)) {
+          this.rateLimiter?.noteRateLimit({ retryAfterMs });
+        }
 
         if (attempt < maxAttempts) {
-          const retryAfterMs = this.getRetryAfterMs(lastError);
           if (this.isRateLimitError(lastError)) {
-            this.rateLimiter?.noteRateLimit({ retryAfterMs });
             continue;
           }
 

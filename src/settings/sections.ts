@@ -264,7 +264,7 @@ export function renderAdvancedSection(context: SettingsSectionContext): void {
 
   new Setting(containerEl)
     .setName('Retry attempts')
-    .setDesc('Number of retries after an upload failure.')
+    .setDesc('Maximum attempts for individual Feishu API requests.')
     .addSlider((slider) => {
       slider
         .setLimits(0, 10, 1)
@@ -286,7 +286,7 @@ export function renderAdvancedSection(context: SettingsSectionContext): void {
 
   new Setting(containerEl)
     .setName('Retry delay')
-    .setDesc('Milliseconds to wait before retrying a failed upload.')
+    .setDesc('Milliseconds to wait before retrying a failed Feishu API request.')
     .addSlider((slider) => {
       slider
         .setLimits(100, 10000, 100)

@@ -76,9 +76,11 @@ Rules:
 - `size` comes from Obsidian file stats
 - `mtimeMs` comes from Obsidian file stats
 - `uploadedAt` is written with `new Date().toISOString()` after a successful upload
-- `remote` is optional and is currently written only for Markdown files synced in document mode
-- `remote.type` is the persisted remote-object family for that path; today only `"document"` is used
-- `remote.token` is the Feishu `document_id` that should be reused for in-place doc updates on later runs
+- `remote` is optional for legacy state but should be written after every successful upload
+- `remote.type` is the persisted remote-object family for that path; supported values are `"document"` and `"file"`
+- `remote.token` is the Feishu remote identity for the uploaded object:
+  - `"document"` uses the DocX `document_id`
+  - `"file"` uses the Drive file token returned by upload
 - `remote.parentFolderToken` records the remote parent folder used when the state entry was written
 - `remote.title` and `remote.url` are convenience fields for recovery/debugging, not state keys
 
@@ -89,7 +91,10 @@ A file is treated as unchanged only when all of the following are true:
 - a previous state entry exists for `state[relPath]`
 - `prev.size === file.size`
 - `prev.mtimeMs === file.mtimeMs`
-- if `markdownSyncMode === "document"` and the path is Markdown, `prev.remote.token` is still present and valid enough to act as the durable remote identity
+- `prev.remote.type` matches the expected remote object family for the current mode:
+  - Markdown in `markdownSyncMode === "document"` requires `"document"`
+  - all other files require `"file"`
+- `prev.remote.token` is present
 
 If those checks pass, the file is skipped without any remote API calls.
 
@@ -97,7 +102,7 @@ If those checks pass, the file is skipped without any remote API calls.
 
 - The current `StateTracker` store is backed by plugin data through `src/main.ts`.
 - State is saved after successful uploads and survives plugin reload.
-- Regular-file uploads still do not persist a remote file token; they remain delete-and-reupload operations.
+- Regular-file uploads persist the returned remote file token after a successful upload, but changed regular files remain delete-and-reupload operations.
 - Markdown document mode now persists remote document identity and can update a known remote document in place across runs.
 - If the stored remote document is missing, the runtime falls back to same-remote-folder and same-title recovery before creating a fresh document.
 - If multiple same-title remote documents already exist in one folder and state is missing, recovery currently reuses the first matching document to stop the system from creating even more duplicates.
@@ -122,6 +127,7 @@ These limitations are part of the current runtime behavior and must be changed d
 - Modify a file and verify its state entry receives a new `uploadedAt`.
 - In document mode, modify a Markdown file and verify its persisted `remote.token` stays stable while content updates in place remotely.
 - In document mode, delete the persisted `remote` object for one unchanged Markdown file and verify the next sync does not skip it; it should recover or recreate the remote doc identity and write `remote.token` back.
+- Delete the persisted `remote` object for one unchanged regular file and verify the next sync uploads it once and writes `remote.type = "file"` with a token.
 - Reload the plugin and verify unchanged files are still skipped because persisted state is reloaded correctly.
 
 ## Scenario: Persisted Remote Identity For Markdown Documents
@@ -142,10 +148,10 @@ These limitations are part of the current runtime behavior and must be changed d
 
 ### 3. Contracts
 
-- `FileState.remote` is optional.
-- `FileState.remote` is currently written only for Markdown files synced in `markdownSyncMode = "document"`.
-- `FileState.remote.type` must currently be `"document"` when present.
-- `FileState.remote.token` is the authoritative remote `document_id` for future updates of the same normalized `relPath`.
+- `FileState.remote` is optional for legacy state.
+- `FileState.remote` should be written for successful document and regular-file uploads.
+- `FileState.remote.type` must be `"document"` for Markdown online docs and `"file"` for regular Drive file uploads.
+- `FileState.remote.token` is the authoritative remote identity for future skips or updates of the same normalized `relPath`.
 - `FileState.remote.parentFolderToken` is recovery context only; it is not a replacement for the state key.
 - Sync state must still be keyed by normalized local `relPath`, never by remote token.
 - A failed upload must not overwrite or partially refresh `FileState.remote`.
@@ -155,23 +161,25 @@ These limitations are part of the current runtime behavior and must be changed d
 
 | Case | Expected behavior |
 |------|-------------------|
-| Old state entry has no `remote` | do not skip the file; allow sync and fall back to recovery/create logic |
-| `remote.type !== "document"` | ignore persisted remote identity for document updates |
+| Old state entry has no `remote` | do not skip the file; allow sync and write a fresh remote identity on success |
+| `remote.type !== expected type` | ignore persisted remote identity for skip/update decisions |
 | `remote.token` missing or empty | treat as no remote identity |
 | Document upload fails after remote lookup | do not write a fresh state entry |
 | Document upload succeeds against an existing doc | keep same `remote.token`, refresh `uploadedAt` |
 | Document upload succeeds after recovery/create | write new `remote.token` and refresh `uploadedAt` |
+| Regular file upload succeeds | write `remote.type = "file"` and the returned Drive file token |
 
 ### 5. Good / Base / Bad Cases
 
 - Good: `state["Folder/Note.md"]` stores local file stats plus the remote `document_id` of that exact note.
-- Base: non-document sync still works when `remote` is absent.
+- Base: legacy non-document state with no `remote` is repaired by one re-upload rather than being skipped.
 - Bad: use title alone as the durable identity of a Markdown document or use remote token as the top-level state key.
 
 ### 6. Tests Required
 
 - Sync one Markdown file in document mode, reload the plugin, modify the same file, sync again, and assert the remote doc URL stays stable.
 - Delete `remote` from an unchanged Markdown state entry, sync again, and assert the file is reprocessed instead of skipped.
+- Delete `remote` from an unchanged regular-file state entry, sync again, and assert the file is uploaded once and then skipped on the following unchanged run.
 - Delete the persisted `remote` field from plugin data, sync again, and assert recovery or create still succeeds.
 - Force a document upload failure and assert the previous state entry is not replaced with partial remote metadata.
 

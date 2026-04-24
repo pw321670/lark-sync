@@ -18,7 +18,7 @@ export interface FileEntry {
 }
 
 export interface RemoteFileRef {
-  type: 'document';
+  type: 'document' | 'file';
   token: string;
   title?: string;
   parentFolderToken?: string;

@@ -34,8 +34,6 @@ export interface FileReader {
 
 export interface UploadOptions {
   concurrency?: number;
-  retryAttempts?: number;
-  retryDelay?: number;
   isCancelled?: () => boolean;
   onFileComplete?: (progress: UploadProgress) => void;
 }
@@ -95,8 +93,6 @@ export class UploadManager {
     options: UploadOptions = {},
   ): Promise<UploadResult> {
     const concurrency = options.concurrency || this.config.concurrentUploads || 3;
-    const retryAttempts = options.retryAttempts || this.config.retryAttempts || 3;
-    const retryDelay = options.retryDelay || this.config.retryDelay || 1000;
 
     const result: UploadResult = {
       uploadedCount: 0,
@@ -149,12 +145,7 @@ export class UploadManager {
       tasks,
       concurrency,
       async (task) => {
-        const uploadResult = await this.uploadFileWithRetry(
-          task,
-          retryAttempts,
-          retryDelay,
-          options.isCancelled,
-        );
+        const uploadResult = await this.uploadFileOnce(task, options.isCancelled);
 
         completedCount += 1;
         if (uploadResult.success) {
@@ -191,50 +182,37 @@ export class UploadManager {
     return result;
   }
 
-  private async uploadFileWithRetry(
+  private async uploadFileOnce(
     task: UploadTask,
-    retryAttempts: number,
-    retryDelay: number,
     isCancelled?: () => boolean,
   ): Promise<UploadTaskResult> {
     const { file, parentFolderToken, previousState } = task;
-    let lastError: string | undefined;
 
-    for (let attempt = 1; attempt <= retryAttempts; attempt += 1) {
-      if (isCancelled?.()) {
-        return {
-          file,
-          success: false,
-          error: 'Operation cancelled',
-          bytesUploaded: 0,
-        };
-      }
-
-      try {
-        const upload = await this.uploadFile(file, parentFolderToken, previousState);
-        return {
-          file,
-          success: true,
-          bytesUploaded: upload.bytesUploaded,
-          remote: upload.remote,
-        };
-      } catch (error) {
-        lastError = (error as Error).message;
-
-        if (attempt < retryAttempts) {
-          this.log('warn', `Retrying ${file.relPath} after failure: ${lastError}`);
-          await this.sleep(retryDelay);
-        }
-      }
+    if (isCancelled?.()) {
+      return {
+        file,
+        success: false,
+        error: 'Operation cancelled',
+        bytesUploaded: 0,
+      };
     }
 
-    this.log('error', `Upload failed after ${retryAttempts} attempts: ${file.relPath}`);
-    return {
-      file,
-      success: false,
-      error: lastError,
-      bytesUploaded: 0,
-    };
+    try {
+      const upload = await this.uploadFile(file, parentFolderToken, previousState);
+      return {
+        file,
+        success: true,
+        bytesUploaded: upload.bytesUploaded,
+        remote: upload.remote,
+      };
+    } catch (error) {
+      return {
+        file,
+        success: false,
+        error: (error as Error).message,
+        bytesUploaded: 0,
+      };
+    }
   }
 
   private async uploadFile(
@@ -325,9 +303,15 @@ export class UploadManager {
     const fileContent = await this.fileReader.readFileContent(file.relPath);
 
     await this.deleteExistingFiles(parentFolderToken, fileName);
-    await this.feishuClient.uploadSmallFile(parentFolderToken, fileName, fileContent, file.size);
+    const token = await this.feishuClient.uploadSmallFile(
+      parentFolderToken,
+      fileName,
+      fileContent,
+      file.size,
+    );
     return {
       bytesUploaded: file.size,
+      remote: this.buildFileRef(token, fileName, parentFolderToken),
     };
   }
 
@@ -341,6 +325,10 @@ export class UploadManager {
 
     for (const existingItem of existingItems) {
       if (!existingItem.token) {
+        continue;
+      }
+
+      if (existingItem.type === 'file') {
         continue;
       }
 
@@ -376,6 +364,19 @@ export class UploadManager {
     }
 
     return this.feishuDocClient;
+  }
+
+  private buildFileRef(
+    token: string,
+    fileName: string,
+    parentFolderToken: string,
+  ): RemoteFileRef {
+    return {
+      type: 'file',
+      token,
+      title: fileName,
+      parentFolderToken,
+    };
   }
 
   private buildDocumentRef(
@@ -502,22 +503,5 @@ export class UploadManager {
 
   private isMarkdownFile(fileName: string): boolean {
     return fileName.toLowerCase().endsWith('.md');
-  }
-
-  private log(level: 'warn' | 'error', message: string): void {
-    if (level === 'error') {
-      console.error(`[UploadManager:${level}] ${message}`);
-      return;
-    }
-
-    if (this.config.logLevel === 'error') {
-      return;
-    }
-
-    console.warn(`[UploadManager:${level}] ${message}`);
-  }
-
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

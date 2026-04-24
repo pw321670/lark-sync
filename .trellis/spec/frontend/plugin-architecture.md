@@ -167,7 +167,7 @@ If a file needs both `obsidian` APIs and Feishu sync behavior, split it until ea
   - vault scanning,
   - path normalization,
   - folder creation,
-  - upload retries,
+  - Feishu request-level retries,
   - sync result aggregation,
   - cooperative cancellation during folder and upload work.
 

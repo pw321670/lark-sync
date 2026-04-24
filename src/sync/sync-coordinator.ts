@@ -62,10 +62,10 @@ interface UploadLanePolicy {
 }
 
 const DOCUMENT_BATCH_SIZE = 10;
-const DOCUMENT_COOLDOWN_MS = 15_000;
+const DOCUMENT_COOLDOWN_MS = 0;
 const DOCUMENT_DEGRADED_COOLDOWN_MS = 30_000;
 const FILE_BATCH_SIZE = 25;
-const FILE_COOLDOWN_MS = 5_000;
+const FILE_COOLDOWN_MS = 0;
 const FILE_DEGRADED_COOLDOWN_MS = 15_000;
 const RATE_LIMIT_QPS = 3;
 const RATE_LIMIT_BASE_PENALTY_MS = 10_000;
@@ -239,8 +239,6 @@ export class SyncCoordinator {
         aggregate,
         progressContext,
         rateLimiter,
-        retryAttempts: config.retryAttempts,
-        retryDelay: config.retryDelay,
         run,
       });
     }
@@ -262,8 +260,6 @@ export class SyncCoordinator {
         aggregate,
         progressContext,
         rateLimiter,
-        retryAttempts: config.retryAttempts,
-        retryDelay: config.retryDelay,
         run,
       });
     }
@@ -326,8 +322,6 @@ export class SyncCoordinator {
     aggregate: UploadAggregate;
     progressContext: ProgressContext;
     rateLimiter: RateLimiter;
-    retryAttempts?: number;
-    retryDelay?: number;
     run: ActiveSync;
   }): Promise<void> {
     const {
@@ -339,8 +333,6 @@ export class SyncCoordinator {
       aggregate,
       progressContext,
       rateLimiter,
-      retryAttempts,
-      retryDelay,
       run,
     } = params;
 
@@ -360,8 +352,6 @@ export class SyncCoordinator {
 
       const batchResult = await uploadManager.uploadFiles(batch, folderMap, batchPreviousStates, {
         concurrency: currentConcurrency,
-        retryAttempts,
-        retryDelay,
         isCancelled: () => run.cancelled,
         onFileComplete: (progress) => {
           this.emitProgress({
@@ -534,7 +524,7 @@ export class SyncCoordinator {
 
   private resolveRegularFileConcurrency(config: SyncConfig): number {
     const configuredConcurrency = config.concurrentUploads ?? 2;
-    return Math.max(1, Math.min(configuredConcurrency, 2));
+    return Math.max(1, configuredConcurrency);
   }
 
   private scanFiles(): FileEntry[] {
@@ -575,20 +565,21 @@ export class SyncCoordinator {
         return true;
       }
 
-      return this.requiresDocumentStateRecovery(file.relPath, previous, config);
+      return this.requiresRemoteStateRecovery(file.relPath, previous, config);
     });
   }
 
-  private requiresDocumentStateRecovery(
+  private requiresRemoteStateRecovery(
     relPath: string,
     previous: FileState,
     config: SyncConfig,
   ): boolean {
-    if (config.markdownSyncMode !== 'document' || !this.isMarkdownFile(relPath)) {
-      return false;
-    }
+    const expectedRemoteType =
+      config.markdownSyncMode === 'document' && this.isMarkdownFile(relPath)
+        ? 'document'
+        : 'file';
 
-    return previous.remote?.type !== 'document' || !previous.remote.token;
+    return previous.remote?.type !== expectedRemoteType || !previous.remote.token;
   }
 
   private async createFolderStructure(

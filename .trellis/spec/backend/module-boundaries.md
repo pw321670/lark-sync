@@ -9,7 +9,7 @@ The backend no longer needs to preserve a removed standalone script layer. The c
 - [`src/oauth/token-manager.ts`](../../../src/oauth/token-manager.ts): token refresh and single-flight guard
 - [`src/oauth/auth-storage.ts`](../../../src/oauth/auth-storage.ts): storage adapter for auth state
 - [`src/sync/sync-coordinator.ts`](../../../src/sync/sync-coordinator.ts): sync orchestration
-- [`src/sync/upload-manager.ts`](../../../src/sync/upload-manager.ts): upload retries, duplicate-name deletion, and concurrency
+- [`src/sync/upload-manager.ts`](../../../src/sync/upload-manager.ts): upload scheduling, file-vs-document branching, duplicate-name deletion, and remote identity emission
 - [`src/sync/feishu-client.ts`](../../../src/sync/feishu-client.ts): Drive API boundary
 - [`src/sync/feishu-doc-client.ts`](../../../src/sync/feishu-doc-client.ts): DocX API boundary
 - [`src/sync/state-tracker.ts`](../../../src/sync/state-tracker.ts): sync-state contract
@@ -21,8 +21,8 @@ The backend no longer needs to preserve a removed standalone script layer. The c
 | `src/main.ts` | plugin lifecycle, settings persistence, command wiring, auth gating, sync gating |
 | `src/oauth/*` | auth URL building, callback server lifecycle, code exchange, refresh-token lifecycle |
 | `src/sync/sync-coordinator.ts` | scan, filter, change detection, folder-map creation, final sync result |
-| `src/sync/upload-manager.ts` | concurrent upload scheduling, retry loop, file-vs-document branch |
-| `src/sync/feishu-client.ts` | raw Feishu Drive requests and response shaping |
+| `src/sync/upload-manager.ts` | concurrent upload scheduling, file-vs-document branch, remote identity emission, upload result aggregation |
+| `src/sync/feishu-client.ts` | raw Feishu Drive requests, paginated folder inventory, and response shaping |
 | `src/sync/feishu-doc-client.ts` | raw Feishu DocX requests and payload shaping |
 | `src/sync/state-tracker.ts` | state schema, load/save boundary, update timing |
 | `src/utils/*` | config defaults, validation, preview logic, and small shared helpers |
@@ -78,6 +78,7 @@ When refactoring backend code:
   - persisted `docId`
   - same-folder title recovery
   - fresh create
+- `UploadManager` also owns turning successful regular-file uploads into `remote.type = "file"` state metadata.
 - `FeishuDocClient` owns DocX endpoint orchestration and typed DocX error shaping.
 
 **Why**:

@@ -150,7 +150,7 @@ function getRemoteFileRef(value: unknown): RemoteFileRef | undefined {
   }
 
   const input = value as Partial<RemoteFileRef>;
-  if (input.type !== 'document') {
+  if (input.type !== 'document' && input.type !== 'file') {
     return undefined;
   }
 
@@ -164,7 +164,7 @@ function getRemoteFileRef(value: unknown): RemoteFileRef | undefined {
   const url = getString(input.url);
 
   return {
-    type: 'document',
+    type: input.type,
     token,
     ...(title ? { title } : {}),
     ...(parentFolderToken ? { parentFolderToken } : {}),

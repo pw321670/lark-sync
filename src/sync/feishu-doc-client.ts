@@ -481,9 +481,11 @@ export class FeishuDocClient {
 
       if (response.status >= 400 || payload.code !== 0) {
         lastError = this.buildError(action, response, payload);
+        if (this.isRateLimitError(lastError)) {
+          this.rateLimiter?.noteRateLimit({ retryAfterMs: lastError.retryAfterMs });
+        }
 
         if (this.isRateLimitError(lastError) && attempt < this.retryAttempts) {
-          this.rateLimiter?.noteRateLimit({ retryAfterMs: lastError.retryAfterMs });
           continue;
         }
 

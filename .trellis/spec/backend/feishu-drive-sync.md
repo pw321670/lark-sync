@@ -15,7 +15,7 @@ This document defines the current remote sync algorithm and Feishu Drive / Feish
 | Operation | Endpoint family | Current caller |
 |-----------|-----------------|----------------|
 | Refresh token | `POST /open-apis/authen/v2/oauth/token` | OAuth layer before sync starts |
-| List folder contents | Feishu Drive files list | `FeishuClient.ensureFolder()` / duplicate-name checks |
+| List folder contents | `GET /open-apis/drive/v1/files` | `FeishuClient.ensureFolder()` / duplicate-name checks |
 | Create folder | Feishu Drive create folder | `FeishuClient.ensureFolder()` |
 | Upload file | Feishu Drive multipart upload | `UploadManager.uploadAsRegularFile()` |
 | Delete file | Feishu Drive delete file | `UploadManager.deleteExistingFiles()` |
@@ -42,6 +42,8 @@ The sync run builds folder structure before uploads:
 
 Folder discovery is based on normalized vault-relative paths with `/` separators.
 
+`FeishuClient.listFolderItems()` must follow Feishu Drive pagination before caching folder inventory. The files list endpoint accepts `page_size` up to `200`; when a response returns `has_more = true`, the client must pass `next_page_token` as the next `page_token` and keep accumulating items. Cached folder inventory must represent the full current folder page sequence for that sync run, not just the first page.
+
 ## File Sync Algorithm
 
 For each changed file:
@@ -59,10 +61,12 @@ For each changed file:
    - find same-name files in the target folder
    - delete all same-name remote matches
    - upload the local file as a regular Drive file
+   - persist the returned Drive file token as `remote.type = "file"`
 5. Record successful uploads back into `StateTracker`.
 
 This remains a delete-and-reupload strategy for regular files, not an in-place update strategy.
 Document mode is now identity-preserving across runs: the same local `relPath` reuses its stored remote `docId` whenever possible.
+Regular file mode is skip-safe across runs: unchanged files may be skipped only after state contains a persisted remote file token.
 
 ## Remote Matching Rules
 
@@ -71,6 +75,7 @@ Document mode is now identity-preserving across runs: the same local `relPath` r
 - Same-folder and same-title matching is now a recovery fallback, not the primary identity mechanism.
 - The fallback title used in document mode is the Markdown filename without `.md`.
 - Missing `remote.token` in document mode is a state-repair case, not a reason to skip an unchanged Markdown file.
+- Missing `remote.token` for regular files is also a state-repair case; legacy local-only state must upload once to establish `remote.type = "file"`.
 - The current sync engine does not compare remote hashes, timestamps, or metadata.
 - Local file deletion is not mirrored remotely.
 - Folder token caching is in-memory for one sync run.
@@ -96,11 +101,12 @@ There is no chunked upload path yet.
 
 - Folder creation is handled inside `FeishuClient.ensureFolder()`.
 - File uploads use `UploadManager.executeWithConcurrency()` with configurable concurrency.
-- Failed uploads are retried with configurable `retryAttempts` and `retryDelay`.
-- Request-level retry for transient Feishu API failures lives inside the client layer.
+- Whole-file uploads are not replayed after a partial failure; the upload manager records the file failure and moves on.
+- Request-level retry for transient Feishu API failures lives inside the client layer and is controlled by `retryAttempts` and `retryDelay`.
 - One `RateLimiter` instance is created per sync run and shared by both `FeishuClient` and `FeishuDocClient`.
 - The shared limiter must be concurrency-safe: concurrent callers may not observe the same slot and burst through together.
 - Limit responses such as Feishu `code = 99991400`, HTTP `429`, or a `Retry-After` header must feed back into the shared limiter so later requests back off globally instead of only sleeping locally.
+- Batch boundaries are used for progress and rate-limit degradation, but normal batches should not wait by default; cooldown is reserved for observed rate-limit feedback.
 
 These are current plugin-runtime behaviors and should not be described as a legacy migration artifact anymore.
 
@@ -109,6 +115,8 @@ These are current plugin-runtime behaviors and should not be described as a lega
 - Re-uploading a changed file deletes all same-name remote files in the target folder first.
 - Re-syncing a Markdown file in document mode now keeps the same remote document URL when the stored `docId` is still valid.
 - Re-running document mode with unchanged local bytes but missing `remote.token` now repairs the remote identity instead of reporting the file as skipped.
+- Re-running regular file sync with unchanged local bytes but missing `remote.token` now uploads once to repair legacy local-only state instead of reporting the file as skipped.
+- Folder inventory cache is based on all Feishu pages for a folder, so duplicate detection and folder lookup can see items beyond the first 200 children.
 - Document-mode content replacement is implemented by clearing the root page children and recreating the Markdown-derived blocks inside the same document.
 - Remote document identity is preserved, but block ids are not preserved across document-content replacement.
 - If sync state is missing, same-folder title recovery may attach the path to the first matching remote document in that folder to avoid creating more duplicates.
@@ -126,7 +134,7 @@ These are current plugin-runtime behaviors and should not be described as a lega
   - build folder map
   - upload files or documents
   - persist sync state
-- If pagination, chunked upload, remote deletion reconciliation, or finer-grained block patching is added, define the new contract here before changing runtime behavior.
+- If chunked upload, remote deletion reconciliation, or finer-grained block patching is added, define the new contract here before changing runtime behavior.
 
 ## Manual Verification
 
@@ -138,11 +146,89 @@ These are current plugin-runtime behaviors and should not be described as a lega
 - Re-run Markdown document sync after modifying the same file and verify the remote doc URL stays the same.
 - Reload the plugin and verify a later Markdown edit still updates the same remote doc rather than creating a duplicate.
 - Delete `remote.token` from one unchanged Markdown state entry and verify the next document-mode sync repairs it instead of skipping the file.
+- Delete `remote.token` from one unchanged regular-file state entry and verify the next sync uploads it once and writes a `file` remote token.
+- Seed a target folder with more than 200 remote children and verify same-name duplicate detection sees items after the first page.
 - Seed a stale `Note.md` regular file beside the online doc and verify the next successful document-mode sync removes the stale regular file.
 - Sync a standard Markdown table and verify Feishu renders a real table block whose cells still show content for empty and non-empty cells.
-- Verify configured upload retries and concurrent upload limits behave as expected.
+- Verify configured Feishu API request retries and concurrent upload limits behave as expected.
 - Start a large sync with concurrent uploads enabled and verify the shared limiter still spaces Feishu requests instead of releasing multiple workers in the same moment.
 - Force or observe a `99991400` / `429` rate-limit response and verify later requests back off through the shared limiter rather than immediately hammering again.
+
+## Scenario: Paginated Folder Inventory And File Remote Identity Repair
+
+### 1. Scope / Trigger
+
+- Trigger: large remote folders can have more than one Feishu `drive/v1/files` page, and legacy regular-file state may contain only local `size` / `mtimeMs` without a remote token.
+
+### 2. Signatures
+
+```ts
+export class FeishuClient {
+  async listFolderItems(
+    folderToken: string,
+    options?: { forceRefresh?: boolean },
+  ): Promise<FeishuFileItem[]>;
+}
+
+export interface RemoteFileRef {
+  type: 'document' | 'file';
+  token: string;
+  title?: string;
+  parentFolderToken?: string;
+  url?: string;
+}
+```
+
+### 3. Contracts
+
+- `listFolderItems()` must request `page_size=200`, accumulate `data.files`, and continue while `data.has_more === true`.
+- The next request must pass `data.next_page_token` as `page_token`; a `has_more` response without a new page token is an API contract failure and should fail the sync instead of caching partial inventory.
+- The in-memory folder inventory cache stores the full accumulated page sequence for one folder token.
+- Successful regular-file uploads must write `remote.type = "file"` and the returned Drive file token to sync state.
+- Change detection must treat matching local `size` / `mtimeMs` plus missing or wrong `remote.type` as a repair case, not as a skip.
+
+### 4. Validation & Error Matrix
+
+| Case | Expected behavior |
+|------|-------------------|
+| Folder list has one page | cache and return that page |
+| Folder list has multiple pages | request every page before duplicate detection uses the inventory |
+| `has_more = true` but no new page token | throw instead of caching incomplete inventory |
+| Legacy regular-file state has no `remote` | upload once and write `remote.type = "file"` |
+| Regular-file upload fails | do not write or refresh local state |
+| Later unchanged regular-file state has `remote.type = "file"` and token | skip without remote API verification |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a folder with 253 remote children is listed across two pages before same-name deletion checks run.
+- Base: the first post-upgrade sync may upload many unchanged regular files because their legacy state lacks remote file tokens.
+- Bad: counting a regular file as skipped when local stats match but `state[relPath].remote` is absent.
+
+### 6. Tests Required
+
+- Mock `listFolderItems()` with `has_more = true` and assert both pages are requested and returned.
+- Mock a malformed paginated response without `next_page_token` and assert the operation fails clearly.
+- Remove `remote` from an unchanged regular-file state entry and assert the next sync uploads it instead of counting it as skipped.
+- Run one more unchanged sync after the repair upload and assert the file is skipped because state now contains `remote.type = "file"`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const response = await listFirstPage(folderToken);
+folderInventoryCache.set(folderToken, response.data.files);
+```
+
+#### Correct
+
+```ts
+while (hasMore) {
+  const response = await listPage(folderToken, pageToken);
+  items.push(...response.files);
+  pageToken = response.nextPageToken;
+}
+```
 
 ## Scenario: Shared Rate Limit Guard For Feishu APIs
 
@@ -170,7 +256,9 @@ These are current plugin-runtime behaviors and should not be described as a lega
 - `acquire()` must serialize concurrent callers; it cannot rely on each caller reading the same `lastAcquireTime` independently.
 - On successful requests, clients should call `limiter.noteSuccess()` to reset consecutive rate-limit escalation.
 - On rate-limit responses, clients should call `limiter.noteRateLimit({ retryAfterMs })` so later requests inherit a shared backoff window.
+- Clients must call `noteRateLimit()` even when the response happens on the final retry attempt; otherwise the failed request is visible to the user but invisible to later queued requests.
 - Request-level retry remains a safety net, but rate-limit pacing is owned by the shared limiter.
+- `UploadManager` must not add a second whole-file retry loop around Drive or DocX operations. Once client-level retries are exhausted, the file is recorded as failed and the run continues.
 
 ### 4. Validation & Error Matrix
 
@@ -179,20 +267,24 @@ These are current plugin-runtime behaviors and should not be described as a lega
 | Multiple upload workers call `acquire()` at once | requests are serialized and spaced by the limiter interval |
 | Feishu returns `code = 99991400` | classify as rate-limit, push shared next-available time forward |
 | Feishu returns HTTP `429` with `Retry-After` | classify as rate-limit and honor the header when extending backoff |
+| Feishu rate-limits on the final request attempt | record the shared limiter penalty before surfacing the file/API failure |
 | Non-rate-limit API failure | keep normal retry/failure behavior; do not silently classify as rate-limit |
+| A delete-then-upload chain fails after request retries | record one file failure; do not replay the whole chain |
 | Later request succeeds after a rate-limit spell | limiter resets consecutive escalation |
 
 ### 5. Good / Base / Bad Cases
 
 - Good: concurrent sync work still looks like one globally paced Feishu request stream.
 - Base: request-level retries still exist after the limiter, but they no longer create synchronized retry storms.
-- Bad: each worker reads the same timestamp and fires together, or a rate-limit response only sleeps one failing request while other workers continue at full speed.
+- Bad: each worker reads the same timestamp and fires together, a final-attempt rate-limit response is not shared, or upload-manager retries replay destructive chains.
 
 ### 6. Tests Required
 
 - Queue several concurrent `acquire()` calls and assert their release times stay spaced.
 - Exercise both Drive and DocX requests in one sync run and assert they share the same pacing boundary.
 - Simulate a rate-limit response and assert the next request waits for the limiter backoff window.
+- Simulate a final-attempt rate-limit response and assert `noteRateLimit()` still updates the shared limiter before the error is thrown.
+- Simulate a request failure after delete/upload has started and assert `UploadManager` records a failed file without replaying the whole file operation.
 
 ### 7. Wrong vs Correct
 
@@ -367,7 +459,7 @@ export class FeishuDocClient {
 
 export interface FileState {
   remote?: {
-    type: 'document';
+    type: 'document' | 'file';
     token: string;
     title?: string;
     parentFolderToken?: string;
@@ -379,11 +471,12 @@ export interface FileState {
 ### 3. Contracts
 
 - Primary identity for a Markdown document is `state[relPath].remote.token`.
+- Primary skip identity for a regular Drive file is `state[relPath].remote.token` with `remote.type = "file"`.
 - Update order is:
   1. try persisted `remote.token`
   2. if missing or stale, try same remote folder + same document title recovery
   3. if recovery fails, create a new document
-- If `size` and `mtimeMs` still match but `remote.token` is missing, the coordinator must still send the Markdown file through the recovery/create path instead of skipping it.
+- If `size` and `mtimeMs` still match but `remote.token` is missing, the coordinator must still send the file through upload/recovery instead of skipping it.
 - In-place document update is implemented as:
   1. `GET /open-apis/docx/v1/documents/:document_id`
   2. `GET /open-apis/docx/v1/documents/:document_id/blocks/:block_id/children`
@@ -400,7 +493,8 @@ export interface FileState {
 | Case | Expected behavior |
 |------|-------------------|
 | `GET /documents/:document_id` returns not found | treat persisted remote as stale and continue to recovery/create |
-| `size` and `mtimeMs` match but `remote.token` is missing | do not skip; run recovery/create and write a fresh `remote.token` on success |
+| Markdown `size` and `mtimeMs` match but `remote.token` is missing | do not skip; run recovery/create and write a fresh `remote.token` on success |
+| Regular file `size` and `mtimeMs` match but `remote.token` is missing | do not skip; upload once and write `remote.type = "file"` on success |
 | Child list returns zero blocks | skip delete and append new blocks directly |
 | Child list returns `n > 0` blocks | delete `[0, n)` before appending replacement blocks |
 | Append fails after delete | surface sync failure; do not mark local state as successful |

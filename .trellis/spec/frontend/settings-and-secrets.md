@@ -39,6 +39,9 @@ The plugin stores settings and auth in local plugin data, not in repository file
 | `refreshToken` | Derived runtime secret | Do not ask the user to type it in the standard flow |
 | `exclude` | User-managed path list | Multiline list or repeated rows using normalized slash-separated relative paths |
 | `maxDirectUploadMB` | Required sync threshold | Numeric field with minimum validation and clear help text |
+| `concurrentUploads` | Advanced throughput setting | Explain that it controls regular-file upload workers; Markdown online documents may still run serially for safety |
+| `retryAttempts` | Advanced request-retry setting | Explain as maximum attempts for individual Feishu API requests, not whole-file upload replays |
+| `retryDelay` | Advanced request-retry setting | Explain as wait time before retrying a failed Feishu API request |
 | `markdownSyncMode` | User-managed Markdown representation setting | Default to document mode (`Create as online documents`), but allow switching back to regular file upload |
 
 Sync state is not a user setting. It represents bookkeeping and should stay outside the main settings form.
@@ -83,10 +86,12 @@ Current semantic fields:
 
 - key: normalized relative path
 - values: `size`, `mtimeMs`, `uploadedAt`
-- optional `remote` object for document mode:
-  - `type = "document"`
-  - `token = remote document_id`
+- optional `remote` object for legacy entries, but successful current uploads should write it:
+  - `type = "document"` with `token = remote document_id` for Markdown online documents
+  - `type = "file"` with `token = remote Drive file token` for regular file uploads
   - `title`, `parentFolderToken`, `url` for recovery/debugging context
+
+The settings UI must not expose sync-state editing. If a user needs a repair, runtime sync logic should repair missing remote identity by uploading/recovering through the sync path rather than asking the user to edit `syncState`.
 
 ---
 
